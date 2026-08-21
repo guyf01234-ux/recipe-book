@@ -1,0 +1,45 @@
+@import url('https://fonts.googleapis.com/css2?family=Heebo:wght@300;400;500;600;700;800&family=Rubik:wght@400;500;600;700&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --background: #f8fafc;
+  --foreground: #0f172a;
+  --font-heebo: 'Heebo', 'Rubik', system-ui, -apple-system, sans-serif;
+}
+
+body {
+  color: var(--foreground);
+  background: var(--background);
+  font-family: var(--font-heebo);
+  direction: rtl;
+  text-align: right;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Custom scrollbar for recipe cards and lists */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 9999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
+}
+
+/* Smooth modal transitions */
+.modal-overlay {
+  background-color: rgba(15, 23, 42, 0.6);
+  backdrop-filter: blur(4px);
+}

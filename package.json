@@ -1,0 +1,36 @@
+{
+  "name": "recipe-book",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev -p 3005",
+    "build": "prisma generate && next build",
+    "start": "next start -p 3005",
+    "lint": "next lint"
+  },
+  "dependencies": {
+    "@google/genai": "^2.18.0",
+    "@libsql/client": "^0.8.1",
+    "@prisma/adapter-libsql": "^5.22.0",
+    "@prisma/client": "^5.22.0",
+    "clsx": "^2.1.1",
+    "lucide-react": "^0.468.0",
+    "mammoth": "^1.8.0",
+    "next": "^15.1.0",
+    "pdf-parse": "^1.1.1",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "tailwind-merge": "^2.5.5"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.1",
+    "@types/pdf-parse": "^1.1.4",
+    "@types/react": "^19.0.1",
+    "@types/react-dom": "^19.0.1",
+    "autoprefixer": "^10.4.20",
+    "postcss": "^8.4.49",
+    "prisma": "^5.22.0",
+    "tailwindcss": "^3.4.16",
+    "typescript": "^5.7.2"
+  }
+}
