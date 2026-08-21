@@ -108,9 +108,9 @@ export const BookOpeningIntro: React.FC<BookOpeningIntroProps> = ({ onComplete }
       <div
         className={`relative transition-all duration-1500 ease-out ${
           stage === 'zooming'
-            ? 'scale-[1.8] translate-y-10'
+            ? 'scale-[1.8] translate-y-10 translate-x-0'
             : stage === 'opened' || stage === 'opening'
-            ? 'scale-100 sm:translate-x-[22%] md:translate-x-[24%]'
+            ? 'scale-[0.85] sm:scale-100 translate-x-[50%]'
             : 'scale-100 translate-x-0'
         }`}
         style={{
