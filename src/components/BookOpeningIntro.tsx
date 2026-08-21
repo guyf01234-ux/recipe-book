@@ -106,20 +106,16 @@ export const BookOpeningIntro: React.FC<BookOpeningIntroProps> = ({ onComplete }
 
       {/* 3D BOOK CONTAINER */}
       <div
-        className={`relative transition-all duration-1500 ease-out ${
-          stage === 'zooming'
-            ? 'scale-[1.8] translate-y-10 translate-x-0'
-            : stage === 'opened' || stage === 'opening'
-            ? 'scale-[0.85] sm:scale-100 translate-x-[50%]'
-            : 'scale-100 translate-x-0'
-        }`}
+        className="relative select-none"
         style={{
           transformStyle: 'preserve-3d',
           transform:
             stage === 'closed'
-              ? 'rotateX(16deg) rotateY(-8deg) rotateZ(0deg)'
-              : 'rotateX(8deg) rotateY(0deg) rotateZ(0deg)',
-          transition: 'transform 2.2s cubic-bezier(0.25, 1, 0.5, 1), transform-origin 2s ease',
+              ? 'translateX(0%) rotateX(16deg) rotateY(-8deg) rotateZ(0deg) scale(1)'
+              : stage === 'zooming'
+              ? 'translateX(0%) translateY(35px) scale(1.8) rotateX(6deg) rotateY(0deg) rotateZ(0deg)'
+              : 'translateX(50%) rotateX(8deg) rotateY(0deg) rotateZ(0deg) scale(1)',
+          transition: 'transform 2.2s cubic-bezier(0.25, 1, 0.5, 1)',
         }}
       >
         {/* Book shadow on table */}
