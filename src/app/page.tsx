@@ -43,6 +43,8 @@ export default function Home() {
   const [aiSearchExplanation, setAiSearchExplanation] = useState<string>('');
   const [aiSearchQuery, setAiSearchQuery] = useState<string>('');
   const [aiModelUsed, setAiModelUsed] = useState<string>('');
+  const [aiFallbackTriggered, setAiFallbackTriggered] = useState<boolean>(false);
+  const [aiRequestedModel, setAiRequestedModel] = useState<string>('');
 
   // Modals state
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
@@ -154,6 +156,8 @@ export default function Home() {
       setAiSearchExplanation(data.explanation || '');
       setAiSearchQuery(searchQuery.trim());
       setAiModelUsed(data.modelUsed || model);
+      setAiFallbackTriggered(Boolean(data.fallbackTriggered));
+      setAiRequestedModel(data.requestedModel || model);
       setIsAISearchActive(true);
     } catch (err: any) {
       console.error('AI Search failed:', err);
@@ -169,12 +173,16 @@ export default function Home() {
     setAiSearchExplanation('');
     setAiSearchQuery('');
     setAiModelUsed('');
+    setAiFallbackTriggered(false);
+    setAiRequestedModel('');
     fetchRecipes();
   };
 
   const handleRefreshAll = () => {
     setIsAISearchActive(false);
     setAiSearchExplanation('');
+    setAiFallbackTriggered(false);
+    setAiRequestedModel('');
     fetchCategories();
     fetchTotalCount();
     fetchRecipes();
@@ -274,8 +282,13 @@ export default function Home() {
                     {recipes.length} מתכונים מתאימים
                   </span>
                   {aiModelUsed && (
-                    <span className="text-[11px] px-2 py-0.5 bg-white border border-purple-200 text-purple-700 rounded-lg font-mono">
-                      מודל: {aiModelUsed}
+                    <span className="text-[11px] px-2 py-0.5 bg-white border border-purple-200 text-purple-700 rounded-lg font-mono flex items-center gap-1">
+                      <span>מודל: {aiModelUsed}</span>
+                      {aiFallbackTriggered && (
+                        <span className="text-[10px] text-amber-700 bg-amber-50 px-1.5 py-0.2 rounded border border-amber-200 font-sans font-medium">
+                          (גיבוי אוטומטי עקב עומס רגעי ב-{aiRequestedModel})
+                        </span>
+                      )}
                     </span>
                   )}
                 </div>

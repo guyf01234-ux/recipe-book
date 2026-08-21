@@ -138,6 +138,8 @@ ${JSON.stringify(recipesContext, null, 2)}
       explanation: parsedResult.explanation || `נמצאו ${matchingIds.length} מתכונים מתאימים`,
       matchedCount: matchingIds.length,
       modelUsed: successfulModel,
+      requestedModel: initialModel,
+      fallbackTriggered: successfulModel !== initialModel,
     });
   } catch (error: any) {
     console.error('Error in /api/ai/search:', error);
