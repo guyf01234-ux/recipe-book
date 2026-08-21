@@ -70,7 +70,7 @@ export const CategoryFilterBar: React.FC<CategoryFilterBarProps> = ({
               : 'bg-slate-100 text-slate-600 hover:bg-slate-200/80 hover:text-slate-900'
           }`}
         >
-          <span>הכל</span>
+          <span>כל המתכונים</span>
           <span
             className={`text-xs px-1.5 py-0.2 rounded-full ${
               selectedCategory === 'all'

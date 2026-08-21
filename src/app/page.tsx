@@ -27,6 +27,7 @@ import {
 export default function Home() {
   const [recipes, setRecipes] = useState<Recipe[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
+  const [totalAllRecipesCount, setTotalAllRecipesCount] = useState<number>(0);
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [loading, setLoading] = useState(true);
@@ -54,6 +55,18 @@ export default function Home() {
     }
   }, []);
 
+  const fetchTotalCount = useCallback(async () => {
+    try {
+      const res = await fetch('/api/recipes');
+      if (res.ok) {
+        const data = await res.json();
+        setTotalAllRecipesCount(data.length);
+      }
+    } catch (err) {
+      console.error('Error loading total recipes count:', err);
+    }
+  }, []);
+
   const fetchRecipes = useCallback(async () => {
     setLoading(true);
     try {
@@ -69,6 +82,9 @@ export default function Home() {
       if (res.ok) {
         const data = await res.json();
         setRecipes(data);
+        if (!searchQuery.trim() && selectedCategory === 'all') {
+          setTotalAllRecipesCount(data.length);
+        }
       }
     } catch (err) {
       console.error('Error loading recipes:', err);
@@ -79,7 +95,8 @@ export default function Home() {
 
   useEffect(() => {
     fetchCategories();
-  }, [fetchCategories]);
+    fetchTotalCount();
+  }, [fetchCategories, fetchTotalCount]);
 
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -90,6 +107,7 @@ export default function Home() {
 
   const handleRefreshAll = () => {
     fetchCategories();
+    fetchTotalCount();
     fetchRecipes();
   };
 
@@ -129,7 +147,7 @@ export default function Home() {
 
       {/* Header */}
       <Header
-        recipeCount={recipes.length}
+        recipeCount={totalAllRecipesCount}
         categoryCount={categories.length}
         onOpenAddModal={() => {
           setEditingRecipe(null);
@@ -154,7 +172,7 @@ export default function Home() {
           searchQuery={searchQuery}
           onSearchChange={setSearchQuery}
           onOpenCategoryManager={() => setIsCategoryManagerOpen(true)}
-          totalRecipesCount={recipes.length}
+          totalRecipesCount={totalAllRecipesCount}
         />
 
         {/* Recipe Grid / Empty States */}
