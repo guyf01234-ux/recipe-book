@@ -1,7 +1,18 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { Sparkles, ArrowLeft, BookOpen, ChefHat, Flame } from 'lucide-react';
+import { Sparkles, ArrowLeft, ChefHat, Heart } from 'lucide-react';
+
+export const BOOK_PHOTOS = [
+  '/book-photos/photo-1.jpg',
+  '/book-photos/photo-2.jpg',
+  '/book-photos/photo-3.jpg',
+  '/book-photos/photo-4.jpg',
+  '/book-photos/photo-5.jpg',
+  '/book-photos/photo-6.jpg',
+  '/book-photos/photo-7.jpg',
+  '/book-photos/photo-8.jpg',
+];
 
 interface BookOpeningIntroProps {
   onComplete: () => void;
@@ -10,8 +21,13 @@ interface BookOpeningIntroProps {
 export const BookOpeningIntro: React.FC<BookOpeningIntroProps> = ({ onComplete }) => {
   const [stage, setStage] = useState<'closed' | 'opening' | 'opened' | 'zooming' | 'done'>('closed');
   const [particles, setParticles] = useState<Array<{ id: number; top: number; left: number; size: number; duration: number; delay: number }>>([]);
+  const [selectedPhoto, setSelectedPhoto] = useState<string>(BOOK_PHOTOS[0]);
 
   useEffect(() => {
+    // Pick a random photo from the collection each time the book opens
+    const randomIndex = Math.floor(Math.random() * BOOK_PHOTOS.length);
+    setSelectedPhoto(BOOK_PHOTOS[randomIndex]);
+
     // Generate gold sparkles
     const p = Array.from({ length: 24 }).map((_, i) => ({
       id: i,
@@ -23,23 +39,23 @@ export const BookOpeningIntro: React.FC<BookOpeningIntroProps> = ({ onComplete }
     }));
     setParticles(p);
 
-    // Sequence timeline (slower, more majestic pace)
+    // Sequence timeline
     const t1 = setTimeout(() => {
       setStage('opening');
     }, 1400);
 
     const t2 = setTimeout(() => {
       setStage('opened');
-    }, 4600);
+    }, 4400);
 
     const t3 = setTimeout(() => {
       setStage('zooming');
-    }, 7200);
+    }, 7600);
 
     const t4 = setTimeout(() => {
       setStage('done');
       onComplete();
-    }, 8800);
+    }, 9200);
 
     return () => {
       clearTimeout(t1);
@@ -107,7 +123,7 @@ export const BookOpeningIntro: React.FC<BookOpeningIntroProps> = ({ onComplete }
 
         {/* THE ENTIRE BOOK WRAPPER */}
         <div
-          className="relative w-[340px] sm:w-[420px] h-[480px] sm:h-[540px] rounded-r-2xl"
+          className="relative w-[340px] sm:w-[430px] h-[500px] sm:h-[560px] rounded-r-2xl"
           style={{ transformStyle: 'preserve-3d' }}
         >
           {/* BACK COVER (Always underneath) */}
@@ -119,56 +135,77 @@ export const BookOpeningIntro: React.FC<BookOpeningIntroProps> = ({ onComplete }
             }}
           />
 
-          {/* INSIDE PAGES BASE (The stationary right page block) */}
+          {/* INSIDE PAGES BASE (The stationary right page featuring the randomly selected photo) */}
           <div
-            className="absolute inset-2 sm:inset-3 rounded-r-xl bg-[#fbf6e9] border border-[#e2d5b8] shadow-inner p-6 sm:p-8 flex flex-col justify-between overflow-hidden"
+            className="absolute inset-2 sm:inset-3 rounded-r-xl bg-[#fbf6e9] border border-[#e2d5b8] shadow-inner p-4 sm:p-6 flex flex-col justify-between overflow-hidden"
             style={{
               backgroundImage: `radial-gradient(#eadaaa 1px, transparent 1px), linear-gradient(to right, #eeddbb, #fdfaf2 10%, #fdfaf2 90%, #eeddbb)`,
               backgroundSize: '20px 20px, 100% 100%',
               boxShadow: 'inset 15px 0 30px rgba(120,53,15,0.15), 5px 5px 20px rgba(0,0,0,0.3)',
             }}
           >
-            {/* Vintage Page Content */}
-            <div className="border-2 border-[#caa469]/40 rounded-lg p-5 h-full flex flex-col justify-between relative">
+            {/* Vintage Page Content with Photo */}
+            <div className="border-2 border-[#caa469]/40 rounded-lg p-3 sm:p-4 h-full flex flex-col justify-between relative">
               {/* Corner Ornaments */}
-              <div className="absolute top-1.5 right-1.5 text-amber-700/40 text-xs">❦</div>
-              <div className="absolute top-1.5 left-1.5 text-amber-700/40 text-xs">❦</div>
-              <div className="absolute bottom-1.5 right-1.5 text-amber-700/40 text-xs">❦</div>
-              <div className="absolute bottom-1.5 left-1.5 text-amber-700/40 text-xs">❦</div>
+              <div className="absolute top-1 right-1 text-amber-700/40 text-xs">❦</div>
+              <div className="absolute top-1 left-1 text-amber-700/40 text-xs">❦</div>
+              <div className="absolute bottom-1 right-1 text-amber-700/40 text-xs">❦</div>
+              <div className="absolute bottom-1 left-1 text-amber-700/40 text-xs">❦</div>
 
-              {/* Header */}
+              {/* Header Title */}
+              <div className="text-center space-y-0.5">
+                <div className="flex items-center justify-center gap-1.5 text-amber-800">
+                  <ChefHat className="w-4 h-4" />
+                  <h3 className="font-serif font-bold text-amber-950 text-base sm:text-lg tracking-wide leading-snug">
+                    ספר המתכונים של שמוליק פייגנבוים
+                  </h3>
+                </div>
+                <div className="h-0.5 w-24 bg-gradient-to-r from-transparent via-amber-600/40 to-transparent mx-auto" />
+              </div>
+
+              {/* VINTAGE FRAMED PHOTO (Randomly picked on each opening) */}
+              <div className="my-auto flex flex-col items-center justify-center">
+                <div
+                  className="relative p-2 sm:p-2.5 bg-white/95 rounded-lg border border-amber-800/20 shadow-md transform -rotate-1 hover:rotate-0 transition-transform duration-500 max-w-[280px] sm:max-w-[320px]"
+                  style={{
+                    boxShadow: '0 8px 20px -4px rgba(120, 53, 15, 0.25), 0 2px 6px rgba(0,0,0,0.1)',
+                  }}
+                >
+                  {/* Antique Photo Corners / Photo mounting tape */}
+                  <div className="absolute -top-1 -right-1 w-4 h-4 border-t-2 border-r-2 border-amber-700/60" />
+                  <div className="absolute -top-1 -left-1 w-4 h-4 border-t-2 border-l-2 border-amber-700/60" />
+                  <div className="absolute -bottom-1 -right-1 w-4 h-4 border-b-2 border-r-2 border-amber-700/60" />
+                  <div className="absolute -bottom-1 -left-1 w-4 h-4 border-b-2 border-l-2 border-amber-700/60" />
+
+                  {/* Photo Container */}
+                  <div className="relative w-[240px] sm:w-[280px] h-[160px] sm:h-[190px] rounded overflow-hidden bg-amber-900/10 border border-amber-200/50">
+                    <img
+                      src={selectedPhoto}
+                      alt="תמונת זכרונות משפחתית"
+                      className="w-full h-full object-cover"
+                    />
+                    {/* Subtle warm vintage film lighting overlay */}
+                    <div className="absolute inset-0 bg-gradient-to-t from-amber-950/20 via-transparent to-amber-100/10 pointer-events-none" />
+                  </div>
+
+                  {/* Handwritten Hebrew Caption */}
+                  <div className="pt-2 text-center">
+                    <p className="font-serif italic text-[11px] sm:text-xs text-amber-900/90 flex items-center justify-center gap-1 font-medium">
+                      <span>רגעים של טעם, משפחה ואהבה</span>
+                      <Heart className="w-3 h-3 text-red-700/70 fill-red-700/70 inline" />
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Bottom Quote & Subtitle */}
               <div className="text-center space-y-1">
-                <div className="w-10 h-10 mx-auto rounded-full bg-amber-100 border border-amber-300/80 flex items-center justify-center text-amber-800">
-                  <ChefHat className="w-5 h-5" />
-                </div>
-                <h3 className="font-serif font-bold text-amber-950 text-lg sm:text-xl tracking-wide leading-snug">
-                  ספר המתכונים
-                  <span className="block text-amber-800 text-sm sm:text-base font-semibold">
-                    של שמוליק פייגנבוים
-                  </span>
-                </h3>
-                <div className="h-0.5 w-28 bg-gradient-to-r from-transparent via-amber-600/40 to-transparent mx-auto" />
-                <p className="text-[11px] text-amber-800/80 italic font-serif">
-                  אוצר הטעמים, הזכרונות והיצירות המשפחתיות
+                <p className="text-[11px] text-amber-900/80 italic font-serif leading-tight">
+                  "אוצר הטעמים, הזכרונות והיצירות המשפחתיות"
                 </p>
-              </div>
-
-              {/* Recipe Calligraphy preview */}
-              <div className="my-auto space-y-3 px-2">
-                <div className="flex items-center gap-2 text-xs font-semibold text-amber-900 border-b border-amber-800/10 pb-1">
-                  <Flame className="w-3.5 h-3.5 text-amber-600" />
-                  <span>מתכון היום מתוך האוסף</span>
+                <div className="text-[9px] text-amber-800/60 font-serif pt-1 border-t border-amber-800/10">
+                  מופעל ומאורגן על ידי בינה מלאכותית • Gemini
                 </div>
-                <div className="space-y-1.5 text-[11px] text-amber-900/80 leading-relaxed font-serif">
-                  <p>• מצרכים טריים, תבלינים בניחוח עשיר</p>
-                  <p>• הוראות הכנה מדויקות שלב אחרי שלב</p>
-                  <p>• סודות וטיפים קולינריים שעוברים מדור לדור</p>
-                </div>
-              </div>
-
-              {/* Footer */}
-              <div className="text-center pt-2 border-t border-amber-800/10 text-[10px] text-amber-800/60 font-serif">
-                מופעל ומאורגן על ידי בינה מלאכותית • Gemini
               </div>
             </div>
           </div>
