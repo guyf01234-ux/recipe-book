@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
+import { findMatchingCategoryIds } from '@/lib/hebrewSearch';
 
 export async function GET(req: NextRequest) {
   try {
@@ -24,14 +25,32 @@ export async function GET(req: NextRequest) {
       }
     }
 
-    // Filter by search query (title, ingredients, notes)
+    // Filter by search query (title, ingredients, notes, description, AND matching categories)
     if (search) {
-      whereClause.OR = [
+      // Find matching category IDs based on spelling variants, aliases, and normalizer
+      const allCategories = await prisma.category.findMany({ select: { id: true, name: true } });
+      const matchedCategoryIds = findMatchingCategoryIds(search, allCategories);
+
+      const orConditions: any[] = [
         { title: { contains: search } },
         { ingredients: { contains: search } },
         { description: { contains: search } },
         { notes: { contains: search } },
       ];
+
+      if (matchedCategoryIds.length > 0) {
+        orConditions.push({
+          categories: {
+            some: {
+              categoryId: {
+                in: matchedCategoryIds,
+              },
+            },
+          },
+        });
+      }
+
+      whereClause.OR = orConditions;
     }
 
     const recipes = await prisma.recipe.findMany({
