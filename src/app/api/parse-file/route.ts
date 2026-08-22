@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import mammoth from 'mammoth';
 import pdfParse from 'pdf-parse';
-import { parseRecipeWithGemini, getGeminiClient, getActiveGeminiModel } from '@/lib/gemini';
+// @ts-ignore
+import WordExtractor from 'word-extractor';
+import { parseRecipeWithGemini, getGeminiClient, getActiveGeminiModel, FALLBACK_MODELS } from '@/lib/gemini';
 import { ParsedRecipe } from '@/types';
 
 export const config = {
@@ -9,6 +11,8 @@ export const config = {
     bodyParser: false,
   },
 };
+
+const wordDocExtractor = new WordExtractor();
 
 /**
  * Converts DOCX to plain text while strictly preserving paragraph spacing,
@@ -91,6 +95,17 @@ export async function POST(req: NextRequest) {
       fileType === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
     ) {
       extractedText = await extractFormattedTextFromDocx(buffer);
+    } else if (
+      lowerName.endsWith('.doc') ||
+      fileType === 'application/msword'
+    ) {
+      // Legacy Microsoft Word 97-2003 binary format
+      const extractedDoc = await wordDocExtractor.extract(buffer);
+      extractedText = (extractedDoc.getBody() || '')
+        .replace(/\r\n/g, '\n')
+        .replace(/\r/g, '\n')
+        .replace(/\n{3,}/g, '\n\n')
+        .trim();
     } else if (lowerName.endsWith('.pdf') || fileType === 'application/pdf') {
       const pdfData = await pdfParse(buffer);
       // Normalize line breaks in PDF text
@@ -114,9 +129,9 @@ export async function POST(req: NextRequest) {
       lowerName.endsWith('.webp') ||
       fileType.startsWith('image/')
     ) {
-      // For images, use Gemini Multimodal directly
+      // For images, use Gemini Multimodal with automatic fallback
       const ai = getGeminiClient();
-      const model = modelOverride || (await getActiveGeminiModel());
+      const initialModel = modelOverride || (await getActiveGeminiModel());
       const base64Data = buffer.toString('base64');
       const mimeType = fileType || (lowerName.endsWith('.png') ? 'image/png' : 'image/jpeg');
 
@@ -136,29 +151,62 @@ export async function POST(req: NextRequest) {
 }
 `;
 
-      const response = await ai.models.generateContent({
-        model: model,
-        contents: [
-          {
-            role: 'user',
-            parts: [
-              { text: prompt },
+      const modelsToTry = [
+        initialModel,
+        ...FALLBACK_MODELS.filter((m) => m !== initialModel),
+      ];
+
+      let lastError: any = null;
+      let parsed: ParsedRecipe | null = null;
+
+      for (const model of modelsToTry) {
+        try {
+          const response = await ai.models.generateContent({
+            model: model,
+            contents: [
               {
-                inlineData: {
-                  mimeType: mimeType,
-                  data: base64Data,
-                },
+                role: 'user',
+                parts: [
+                  { text: prompt },
+                  {
+                    inlineData: {
+                      mimeType: mimeType,
+                      data: base64Data,
+                    },
+                  },
+                ],
               },
             ],
-          },
-        ],
-        config: {
-          responseMimeType: 'application/json',
-        },
-      });
+            config: {
+              responseMimeType: 'application/json',
+            },
+          });
 
-      const cleaned = (response.text || '').replace(/```json/g, '').replace(/```/g, '').trim();
-      const parsed = JSON.parse(cleaned) as ParsedRecipe;
+          const cleaned = (response.text || '').replace(/```json/g, '').replace(/```/g, '').trim();
+          parsed = JSON.parse(cleaned) as ParsedRecipe;
+          break;
+        } catch (err: any) {
+          lastError = err;
+          const isRetryable =
+            err?.status === 503 ||
+            err?.status === 429 ||
+            err?.status === 404 ||
+            err?.message?.includes('high demand') ||
+            err?.message?.includes('no longer available') ||
+            err?.message?.includes('NOT_FOUND') ||
+            err?.message?.includes('UNAVAILABLE');
+
+          if (isRetryable) {
+            console.warn(`Image parsing with model ${model} failed, trying fallback...`);
+            continue;
+          }
+          throw err;
+        }
+      }
+
+      if (!parsed) {
+        throw lastError || new Error('Failed to parse image recipe');
+      }
 
       const reconstructedRaw = `[טקסט שחולץ מתמונה: ${fileName}]\n\n` +
         `שם המתכון: ${parsed.title || ''}\n\n` +
@@ -181,39 +229,46 @@ export async function POST(req: NextRequest) {
           instructions: Array.isArray(parsed.instructions) ? parsed.instructions : [],
           notes: parsed.notes || '',
           suggestedCategory: parsed.suggestedCategory || '',
-          sourceFile: fileName,
           rawContent: reconstructedRaw,
         },
+        rawText: reconstructedRaw,
       });
     } else {
-      // Try treating as text fallback
-      extractedText = buffer.toString('utf-8');
-    }
-
-    if (!extractedText || extractedText.trim() === '') {
       return NextResponse.json(
-        { error: 'לא הצלחנו לחלץ טקסט מהקובץ. נסה להעלות קובץ docx, pdf או תמונה ברורה.' },
+        {
+          error:
+            'פורמט קובץ לא נתמך. אנא העלה קבצי Word (.docx, .doc), PDF (.pdf), טקסט (.txt), או תמונות (.jpg, .png)',
+        },
         { status: 400 }
       );
     }
 
-    const parsedRecipe = await parseRecipeWithGemini(
-      extractedText,
-      fileName,
-      modelOverride || undefined
-    );
+    if (!extractedText || extractedText.trim() === '') {
+      return NextResponse.json(
+        { error: 'לא הצלחנו לחלץ טקסט מהקובץ. ייתכן שהקובץ ריק או מוגן.' },
+        { status: 422 }
+      );
+    }
+
+    // Process extracted text with Gemini (with automatic model fallback)
+    const parsedRecipe = await parseRecipeWithGemini(extractedText, modelOverride || undefined);
+
+    // Attach raw plain text preserving document line breaks
+    parsedRecipe.rawContent = extractedText;
+
+    // Use filename as title fallback if AI didn't catch a title
+    if (!parsedRecipe.title || parsedRecipe.title.trim() === '') {
+      parsedRecipe.title = fileName.replace(/\.[^/.]+$/, '');
+    }
 
     return NextResponse.json({
-      recipe: {
-        ...parsedRecipe,
-        sourceFile: fileName,
-        rawContent: extractedText,
-      },
+      recipe: parsedRecipe,
+      rawText: extractedText,
     });
   } catch (error: any) {
-    console.error('Error in /api/parse-file:', error);
+    console.error('Error parsing file:', error);
     return NextResponse.json(
-      { error: `שגיאה בעיבוד הקובץ: ${error.message || error}` },
+      { error: `שגיאה בפענוח הקובץ: ${error.message || error}` },
       { status: 500 }
     );
   }

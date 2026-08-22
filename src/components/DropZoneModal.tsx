@@ -41,7 +41,7 @@ interface BatchItem {
   saved?: boolean;
 }
 
-const SUPPORTED_EXTENSIONS = ['.docx', '.pdf', '.txt', '.md', '.jpg', '.jpeg', '.png', '.webp'];
+const SUPPORTED_EXTENSIONS = ['.docx', '.doc', '.pdf', '.txt', '.md', '.jpg', '.jpeg', '.png', '.webp'];
 
 export const DropZoneModal: React.FC<DropZoneModalProps> = ({
   isOpen,
@@ -345,7 +345,7 @@ export const DropZoneModal: React.FC<DropZoneModalProps> = ({
               ref={fileInputRef}
               type="file"
               multiple
-              accept=".docx,.pdf,.txt,.md,.jpg,.jpeg,.png,.webp"
+              accept=".docx,.doc,.pdf,.txt,.md,.jpg,.jpeg,.png,.webp"
               onChange={(e) => {
                 if (e.target.files) handleFilesAdded(Array.from(e.target.files));
               }}
@@ -374,7 +374,7 @@ export const DropZoneModal: React.FC<DropZoneModalProps> = ({
                 גרור לכאן קבצי מתכונים או תיקייה שלמה
               </p>
               <p className="text-xs text-slate-500 mt-0.5">
-                תומך בקבצי Word (.docx), קבצי PDF, מסמכי Google Docs שיוצאו, קבצי טקסט ותמונות
+                תומך בקבצי Word (.docx, .doc), קבצי PDF, מסמכי Google Docs שיוצאו, קבצי טקסט ותמונות
               </p>
             </div>
 

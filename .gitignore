@@ -39,3 +39,7 @@ prisma/*.db
 prisma/*.db-journal
 *.db
 *.db-journal
+
+# Local scan directory & scratch scripts
+recipes_to_scan/
+scripts/
