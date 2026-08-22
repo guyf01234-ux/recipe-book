@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   X,
   Clock,
@@ -18,8 +18,12 @@ import {
   Check,
   BookOpen,
   AlignLeft,
+  RotateCcw,
+  Plus,
+  Minus,
 } from 'lucide-react';
 import { Recipe } from '@/types';
+import { extractBaseServings, scaleIngredientsList } from '@/lib/recipeScaler';
 
 interface RecipeDetailModalProps {
   recipe: Recipe | null;
@@ -44,7 +48,37 @@ export const RecipeDetailModal: React.FC<RecipeDetailModalProps> = ({
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [copiedRaw, setCopiedRaw] = useState(false);
 
+  // Dynamic Serving Scaler (Non-persistent local state)
+  const baseServings = recipe ? extractBaseServings(recipe.servings) : 4;
+  const [targetServings, setTargetServings] = useState<number>(baseServings);
+
+  // Reset target servings whenever modal opens or recipe changes
+  useEffect(() => {
+    if (recipe) {
+      setTargetServings(extractBaseServings(recipe.servings));
+      setCheckedIngredients({});
+    }
+  }, [recipe?.id, recipe?.servings]);
+
   if (!isOpen || !recipe) return null;
+
+  const isScaled = targetServings !== baseServings;
+  const multiplier = targetServings / (baseServings || 4);
+  const displayedIngredients = isScaled
+    ? scaleIngredientsList(recipe.ingredients, multiplier)
+    : recipe.ingredients;
+
+  const handleDecreaseServings = () => {
+    setTargetServings((prev) => Math.max(1, prev - 1));
+  };
+
+  const handleIncreaseServings = () => {
+    setTargetServings((prev) => Math.min(100, prev + 1));
+  };
+
+  const handleResetServings = () => {
+    setTargetServings(baseServings);
+  };
 
   const toggleIngredient = (idx: number) => {
     setCheckedIngredients((prev) => ({
@@ -226,11 +260,11 @@ export const RecipeDetailModal: React.FC<RecipeDetailModalProps> = ({
                 )}
               </div>
 
-              {/* Quick info row */}
-              <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 p-4 bg-amber-50/50 rounded-2xl border border-amber-100 text-sm">
+              {/* Quick info row with Dynamic Servings Stepper */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 p-4 bg-amber-50/50 rounded-2xl border border-amber-100 text-sm">
                 {recipe.prepTime && (
                   <div className="flex items-center gap-2.5">
-                    <div className="w-8 h-8 rounded-xl bg-amber-100 text-amber-700 flex items-center justify-center">
+                    <div className="w-8 h-8 rounded-xl bg-amber-100 text-amber-700 flex items-center justify-center shrink-0">
                       <Clock className="w-4 h-4" />
                     </div>
                     <div>
@@ -242,7 +276,7 @@ export const RecipeDetailModal: React.FC<RecipeDetailModalProps> = ({
 
                 {recipe.cookTime && (
                   <div className="flex items-center gap-2.5">
-                    <div className="w-8 h-8 rounded-xl bg-orange-100 text-orange-700 flex items-center justify-center">
+                    <div className="w-8 h-8 rounded-xl bg-orange-100 text-orange-700 flex items-center justify-center shrink-0">
                       <Flame className="w-4 h-4" />
                     </div>
                     <div>
@@ -252,33 +286,92 @@ export const RecipeDetailModal: React.FC<RecipeDetailModalProps> = ({
                   </div>
                 )}
 
-                {recipe.servings && (
-                  <div className="flex items-center gap-2.5">
-                    <div className="w-8 h-8 rounded-xl bg-blue-100 text-blue-700 flex items-center justify-center">
+                {/* Servings Stepper Card */}
+                <div className="flex items-center justify-between gap-2 bg-white/80 p-2 rounded-xl border border-amber-200/70 sm:col-span-1">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <div className="w-8 h-8 rounded-xl bg-blue-100 text-blue-700 flex items-center justify-center shrink-0">
                       <Users className="w-4 h-4" />
                     </div>
-                    <div>
-                      <div className="text-[11px] text-slate-500">כמות מנות</div>
-                      <div className="font-semibold text-slate-800">{recipe.servings}</div>
+                    <div className="min-w-0">
+                      <div className="text-[11px] text-slate-500 truncate">סועדים / מנות</div>
+                      <div className="font-semibold text-slate-900 text-xs truncate">
+                        {recipe.servings || `${baseServings} מנות`}
+                      </div>
                     </div>
                   </div>
-                )}
+
+                  {/* Stepper controls */}
+                  <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-lg shrink-0">
+                    <button
+                      onClick={handleDecreaseServings}
+                      className="w-6 h-6 rounded-md bg-white hover:bg-slate-200 text-slate-700 flex items-center justify-center shadow-xs transition"
+                      title="הפחת כמות מנות"
+                    >
+                      <Minus className="w-3 h-3" />
+                    </button>
+                    <input
+                      type="number"
+                      min={1}
+                      max={100}
+                      value={targetServings}
+                      onChange={(e) => {
+                        const val = parseInt(e.target.value, 10);
+                        if (!isNaN(val) && val >= 1) setTargetServings(val);
+                      }}
+                      className="w-8 text-center text-xs font-bold bg-transparent border-0 p-0 focus:outline-none text-slate-900"
+                    />
+                    <button
+                      onClick={handleIncreaseServings}
+                      className="w-6 h-6 rounded-md bg-white hover:bg-slate-200 text-slate-700 flex items-center justify-center shadow-xs transition"
+                      title="הגדל כמות מנות"
+                    >
+                      <Plus className="w-3 h-3" />
+                    </button>
+                  </div>
+                </div>
               </div>
+
+              {/* Revert to original quantities banner (Appears when scaled) */}
+              {isScaled && (
+                <div className="p-3 bg-amber-100/70 border border-amber-300 rounded-2xl flex flex-col sm:flex-row items-center justify-between gap-2.5 animate-in fade-in slide-in-from-top-2 duration-200 shadow-xs">
+                  <div className="flex items-center gap-2 text-xs text-amber-950 font-medium">
+                    <Sparkles className="w-4 h-4 text-amber-600 shrink-0" />
+                    <span>
+                      כמויות המצרכים מותאמות כעת ל-<strong>{targetServings} סועדים</strong> (במקור: {recipe.servings || `${baseServings} מנות`}).
+                    </span>
+                  </div>
+
+                  <button
+                    onClick={handleResetServings}
+                    className="px-3 py-1.5 bg-white hover:bg-amber-50 text-amber-900 text-xs font-bold rounded-xl border border-amber-300 transition flex items-center gap-1.5 shrink-0 shadow-sm"
+                  >
+                    <RotateCcw className="w-3.5 h-3.5 text-amber-700" />
+                    <span>חזור לכמויות המקוריות</span>
+                  </button>
+                </div>
+              )}
 
               {/* Ingredients & Instructions Grid */}
               <div className="grid grid-cols-1 md:grid-cols-12 gap-6">
                 {/* Ingredients column */}
                 <div className="md:col-span-5 space-y-3">
                   <div className="flex items-center justify-between border-b border-slate-200 pb-2">
-                    <h2 className="text-base font-bold text-slate-900 flex items-center gap-2">
-                      <Utensils className="w-4 h-4 text-amber-600" />
-                      מצרכים ({recipe.ingredients.length})
-                    </h2>
+                    <div className="flex items-center gap-2">
+                      <h2 className="text-base font-bold text-slate-900 flex items-center gap-1.5">
+                        <Utensils className="w-4 h-4 text-amber-600" />
+                        <span>מצרכים ({displayedIngredients.length})</span>
+                      </h2>
+                      {isScaled && (
+                        <span className="text-[10px] bg-amber-200/80 text-amber-900 px-2 py-0.5 rounded-full font-bold">
+                          {targetServings} מנות
+                        </span>
+                      )}
+                    </div>
                     <span className="text-[11px] text-slate-400">סמן תוך כדי עבודה</span>
                   </div>
 
                   <div className="space-y-1.5">
-                    {recipe.ingredients.map((ing, idx) => {
+                    {displayedIngredients.map((ing, idx) => {
                       const isChecked = Boolean(checkedIngredients[idx]);
                       return (
                         <div
@@ -287,6 +380,8 @@ export const RecipeDetailModal: React.FC<RecipeDetailModalProps> = ({
                           className={`flex items-start gap-2.5 p-2 rounded-xl cursor-pointer transition text-sm ${
                             isChecked
                               ? 'bg-slate-100/80 text-slate-400 line-through'
+                              : isScaled
+                              ? 'hover:bg-amber-50/70 text-slate-900 font-medium'
                               : 'hover:bg-amber-50/60 text-slate-800'
                           }`}
                         >
@@ -349,15 +444,17 @@ export const RecipeDetailModal: React.FC<RecipeDetailModalProps> = ({
                 <div className="flex items-center gap-2">
                   <FileText className="w-5 h-5 text-amber-600 shrink-0" />
                   <div>
-                    <strong>טקסט מקורי ללא שינוי:</strong> זהו הטקסט המדויק כפי שחולץ מהקובץ המקורי{' '}
-                    {recipe.sourceFile ? `(${recipe.sourceFile})` : ''}.
+                    <div className="font-bold">טקסט גולמי מקורי</div>
+                    <div className="text-[11px] text-amber-800">
+                      הטקסט המדויק כפי שנשמר בקובץ המקורי (ללא עיבוד AI).
+                    </div>
                   </div>
                 </div>
 
                 {recipe.rawContent && (
                   <button
                     onClick={handleCopyRaw}
-                    className="flex items-center gap-1 px-3 py-1.5 rounded-xl bg-white border border-amber-300 text-amber-900 hover:bg-amber-100/50 font-medium transition shrink-0"
+                    className="px-3 py-1.5 bg-white hover:bg-amber-100 text-amber-900 rounded-xl font-medium border border-amber-300 transition flex items-center gap-1.5 shadow-sm"
                   >
                     {copiedRaw ? (
                       <>
@@ -374,24 +471,9 @@ export const RecipeDetailModal: React.FC<RecipeDetailModalProps> = ({
                 )}
               </div>
 
-              {recipe.rawContent ? (
-                <div className="bg-stone-50 text-slate-800 rounded-2xl border border-stone-200 p-6 shadow-sm overflow-x-auto max-h-[55vh] overflow-y-auto">
-                  <div
-                    className="font-sans text-sm sm:text-base leading-relaxed sm:leading-loose whitespace-pre-wrap select-text text-slate-800"
-                    dir="rtl"
-                    style={{ wordBreak: 'break-word' }}
-                  >
-                    {recipe.rawContent}
-                  </div>
-                </div>
-              ) : (
-                <div className="p-10 text-center text-slate-400 bg-slate-50 rounded-2xl border border-slate-200 space-y-2">
-                  <FileText className="w-8 h-8 mx-auto text-slate-300" />
-                  <p className="text-sm">
-                    למתכון זה אין טקסט מקור שמור (הוזן ידנית או נוצר ללא קובץ).
-                  </p>
-                </div>
-              )}
+              <div className="p-5 bg-slate-50 border border-slate-200 rounded-2xl font-mono text-xs leading-relaxed whitespace-pre-wrap text-slate-800 overflow-x-auto">
+                {recipe.rawContent || 'אין תוכן גולמי זמין עבור מתכון זה.'}
+              </div>
             </div>
           )}
         </div>
