@@ -11,11 +11,14 @@ import {
   CheckCircle2,
   AlertCircle,
   Loader2,
-  Clock,
-  Flame,
-  ChevronLeft,
+  Cpu,
+  Check,
+  Plus,
+  RefreshCw,
+  Info,
 } from 'lucide-react';
 import { Recipe, NutritionSettings, DEFAULT_NUTRITION_SETTINGS } from '@/types';
+import { PRESET_MODELS } from '@/lib/gemini';
 
 interface BatchNutritionModalProps {
   isOpen: boolean;
@@ -30,7 +33,7 @@ export const BatchNutritionModal: React.FC<BatchNutritionModalProps> = ({
   onClose,
   onComplete,
   nutritionSettings = DEFAULT_NUTRITION_SETTINGS,
-  activeModel,
+  activeModel = 'gemini-3.7-flash',
 }) => {
   const [stats, setStats] = useState<{
     totalCount: number;
@@ -38,11 +41,19 @@ export const BatchNutritionModal: React.FC<BatchNutritionModalProps> = ({
     calculatedCount: number;
   } | null>(null);
 
+  // Calculation mode: 'missing-only' (default) vs 'force-all'
+  const [calcMode, setCalcMode] = useState<'missing-only' | 'force-all'>('missing-only');
+
+  // Selected AI model for the batch run
+  const [selectedModel, setSelectedModel] = useState<string>(activeModel);
+  const [isCustomModel, setIsCustomModel] = useState(false);
+  const [customModelInput, setCustomModelInput] = useState('');
+
   const [isRunning, setIsRunning] = useState(false);
   const [isPaused, setIsPaused] = useState(false);
   const [isDone, setIsDone] = useState(false);
   const [progressCount, setProgressCount] = useState(0);
-  const [initialMissing, setInitialMissing] = useState(0);
+  const [totalTarget, setTotalTarget] = useState(0);
   const [currentRecipeTitle, setCurrentRecipeTitle] = useState<string>('');
   const [currentStatus, setCurrentStatus] = useState<string>('');
   const [log, setLog] = useState<
@@ -66,8 +77,10 @@ export const BatchNutritionModal: React.FC<BatchNutritionModalProps> = ({
       setLog([]);
       setCurrentRecipeTitle('');
       setCurrentStatus('');
+      setSelectedModel(activeModel);
+      setCalcMode('missing-only');
     }
-  }, [isOpen]);
+  }, [isOpen, activeModel]);
 
   const fetchStats = async () => {
     try {
@@ -75,7 +88,6 @@ export const BatchNutritionModal: React.FC<BatchNutritionModalProps> = ({
       if (res.ok) {
         const data = await res.json();
         setStats(data);
-        setInitialMissing(data.missingCount);
       }
     } catch (err) {
       console.error('Error fetching batch stats:', err);
@@ -83,32 +95,44 @@ export const BatchNutritionModal: React.FC<BatchNutritionModalProps> = ({
   };
 
   const handleStart = async () => {
+    const isForce = calcMode === 'force-all';
+    const targetCount = isForce ? (stats?.totalCount ?? 0) : (stats?.missingCount ?? 0);
+
+    if (targetCount === 0) return;
+
     setIsRunning(true);
     setIsPaused(false);
     setIsDone(false);
     isPausedRef.current = false;
     isRunningRef.current = true;
+    setProgressCount(0);
+    setTotalTarget(targetCount);
 
+    let currentOffset = 0;
     let processedSoFar = 0;
-    let missingRemaining = stats?.missingCount ?? initialMissing;
+    let hasMore = true;
+
+    const modelToUse = isCustomModel ? customModelInput.trim() || selectedModel : selectedModel;
 
     try {
-      while (isRunningRef.current && missingRemaining > 0) {
+      while (isRunningRef.current && hasMore) {
         if (isPausedRef.current) {
           setCurrentStatus('מושהה...');
           await new Promise((r) => setTimeout(r, 800));
           continue;
         }
 
-        setCurrentStatus('שולח בקשה לעיבוד ב-Gemini AI...');
+        setCurrentStatus(`שולח בקשה לעיבוד ב-${modelToUse}...`);
 
         const res = await fetch('/api/nutrition/batch', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             limit: 3,
-            onlyMissing: true,
-            modelOverride: activeModel,
+            onlyMissing: !isForce,
+            forceAll: isForce,
+            offset: currentOffset,
+            modelOverride: modelToUse,
           }),
         });
 
@@ -125,7 +149,7 @@ export const BatchNutritionModal: React.FC<BatchNutritionModalProps> = ({
         }
 
         const data = await res.json();
-        const { processedCount, remainingMissing, results } = data;
+        const { processedCount, remainingMissing, totalCount, nextOffset, results } = data;
 
         if (Array.isArray(results)) {
           for (const item of results) {
@@ -155,19 +179,27 @@ export const BatchNutritionModal: React.FC<BatchNutritionModalProps> = ({
 
         processedSoFar += processedCount;
         setProgressCount(processedSoFar);
-        missingRemaining = remainingMissing;
+        currentOffset = nextOffset;
 
-        setStats((prev) =>
-          prev
-            ? {
-                ...prev,
-                missingCount: remainingMissing,
-                calculatedCount: prev.totalCount - remainingMissing,
-              }
-            : null
-        );
+        if (isForce) {
+          hasMore = currentOffset < totalCount && processedCount > 0;
+          setStats((prev) =>
+            prev ? { ...prev, calculatedCount: processedSoFar, missingCount: 0 } : null
+          );
+        } else {
+          hasMore = remainingMissing > 0 && processedCount > 0;
+          setStats((prev) =>
+            prev
+              ? {
+                  ...prev,
+                  missingCount: remainingMissing,
+                  calculatedCount: prev.totalCount - remainingMissing,
+                }
+              : null
+          );
+        }
 
-        if (processedCount === 0 || remainingMissing === 0) {
+        if (!hasMore || processedCount === 0) {
           break;
         }
 
@@ -201,13 +233,14 @@ export const BatchNutritionModal: React.FC<BatchNutritionModalProps> = ({
 
   if (!isOpen) return null;
 
-  const totalToCalculate = initialMissing || (stats?.missingCount ?? 0);
+  const targetCount =
+    calcMode === 'force-all' ? (stats?.totalCount ?? 0) : (stats?.missingCount ?? 0);
   const progressPercent =
-    totalToCalculate > 0 ? Math.min(100, Math.round((progressCount / totalToCalculate) * 100)) : 100;
+    totalTarget > 0 ? Math.min(100, Math.round((progressCount / totalTarget) * 100)) : 0;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 modal-overlay">
-      <div className="bg-white rounded-3xl w-full max-w-lg shadow-2xl border border-slate-200 overflow-hidden flex flex-col max-h-[85vh] animate-in fade-in zoom-in-95 duration-150">
+      <div className="bg-white rounded-3xl w-full max-w-xl shadow-2xl border border-slate-200 overflow-hidden flex flex-col max-h-[85vh] animate-in fade-in zoom-in-95 duration-150">
         {/* Top Header */}
         <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between bg-gradient-to-r from-emerald-50 via-teal-50 to-emerald-50">
           <div className="flex items-center gap-3">
@@ -219,7 +252,7 @@ export const BatchNutritionModal: React.FC<BatchNutritionModalProps> = ({
                 חישוב ערכים תזונתיים לכל הספר
               </h2>
               <p className="text-xs text-slate-500">
-                סריקה וחישוב AI אוטומטי עם מנגנון הגנה ממגבלות קצב
+                סריקה וחישוב AI חכם עם בחירת מודל והגנה ממגבלות קצב
               </p>
             </div>
           </div>
@@ -259,11 +292,116 @@ export const BatchNutritionModal: React.FC<BatchNutritionModalProps> = ({
             </div>
           </div>
 
+          {/* Mode Selection Cards */}
+          {!isRunning && !isDone && (
+            <div className="space-y-2.5">
+              <div className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+                <span>🎯</span>
+                <span>בחר מצב חישוב:</span>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                {/* Mode 1: Missing Only (Default) */}
+                <div
+                  onClick={() => setCalcMode('missing-only')}
+                  className={`p-3.5 rounded-2xl border cursor-pointer transition flex flex-col justify-between ${
+                    calcMode === 'missing-only'
+                      ? 'border-emerald-500 bg-emerald-50/60 ring-2 ring-emerald-500/20'
+                      : 'border-slate-200 hover:border-slate-300 bg-white'
+                  }`}
+                >
+                  <div className="space-y-1">
+                    <div className="flex items-center justify-between">
+                      <span className="font-bold text-xs text-slate-900">
+                        רק מתכונים חסרים (מומלץ)
+                      </span>
+                      {calcMode === 'missing-only' && (
+                        <Check className="w-4 h-4 text-emerald-600 shrink-0" />
+                      )}
+                    </div>
+                    <p className="text-[11px] text-slate-500 leading-snug">
+                      מדלג על מתכונים שכבר חושבו וחוסך זמן ומכסות API.
+                    </p>
+                  </div>
+                  <div className="mt-2.5 pt-2 border-t border-slate-100 flex items-center justify-between text-[11px] font-bold text-emerald-800">
+                    <span>יחושבו:</span>
+                    <span>{stats?.missingCount ?? 0} מתכונים</span>
+                  </div>
+                </div>
+
+                {/* Mode 2: Force All */}
+                <div
+                  onClick={() => setCalcMode('force-all')}
+                  className={`p-3.5 rounded-2xl border cursor-pointer transition flex flex-col justify-between ${
+                    calcMode === 'force-all'
+                      ? 'border-purple-500 bg-purple-50/60 ring-2 ring-purple-500/20'
+                      : 'border-slate-200 hover:border-slate-300 bg-white'
+                  }`}
+                >
+                  <div className="space-y-1">
+                    <div className="flex items-center justify-between">
+                      <span className="font-bold text-xs text-slate-900">
+                        חישוב מחדש של כל הספר
+                      </span>
+                      {calcMode === 'force-all' && (
+                        <Check className="w-4 h-4 text-purple-600 shrink-0" />
+                      )}
+                    </div>
+                    <p className="text-[11px] text-slate-500 leading-snug">
+                      דורך ומחשב מחדש את כל הספר (מעולה בעת שדרוג מודל AI).
+                    </p>
+                  </div>
+                  <div className="mt-2.5 pt-2 border-t border-slate-100 flex items-center justify-between text-[11px] font-bold text-purple-800">
+                    <span>יחושבו:</span>
+                    <span>כל {stats?.totalCount ?? 0} המתכונים</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Model Picker Selector */}
+          {!isRunning && !isDone && (
+            <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-2xl space-y-2">
+              <div className="flex items-center justify-between text-xs font-bold text-slate-800">
+                <span className="flex items-center gap-1.5">
+                  <Cpu className="w-3.5 h-3.5 text-purple-600" />
+                  <span>מודל AI לביצוע החישוב:</span>
+                </span>
+                <span className="text-[10px] text-slate-400 font-normal">ניתן לשנות בכל עת</span>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                {PRESET_MODELS.map((m) => {
+                  const isSelected = !isCustomModel && selectedModel === m.id;
+                  return (
+                    <button
+                      key={m.id}
+                      type="button"
+                      onClick={() => {
+                        setIsCustomModel(false);
+                        setSelectedModel(m.id);
+                      }}
+                      className={`px-3 py-2 rounded-xl text-xs text-right border transition flex items-center justify-between ${
+                        isSelected
+                          ? 'bg-white border-purple-500 text-purple-950 font-bold shadow-xs'
+                          : 'bg-white/60 border-slate-200 text-slate-700 hover:bg-white'
+                      }`}
+                    >
+                      <span className="truncate">{m.name.split(' (')[0]}</span>
+                      {isSelected && <Check className="w-3.5 h-3.5 text-purple-600 shrink-0" />}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
           {/* Rate Limit Protection Notice */}
-          <div className="p-3.5 bg-blue-50/70 border border-blue-200 rounded-2xl text-xs text-blue-950 flex items-start gap-2.5">
+          <div className="p-3 bg-blue-50/70 border border-blue-200 rounded-2xl text-xs text-blue-950 flex items-start gap-2.5">
             <Sparkles className="w-4 h-4 text-blue-600 shrink-0 mt-0.5" />
             <div className="leading-relaxed text-[11px]">
-              <strong>מנגנון בקרת קצב מובנה:</strong> החישוב מתבצע בהדרגה עם השהיות חכמות ו-Exponential Backoff אוטומטי, כדי להבטיח עבודה חלקה ללא שגיאות 429 או עומס ב-Gemini.
+              <strong>מנגנון Exponential Backoff מובנה:</strong> החישוב מתבצע עם השהיות חכמות והגנה מפני עומס ב-Gemini API.
             </div>
           </div>
 
@@ -293,7 +431,7 @@ export const BatchNutritionModal: React.FC<BatchNutritionModalProps> = ({
               <div className="flex items-center justify-between text-[11px] text-slate-500 pt-0.5">
                 <span>
                   חושבו: <strong>{progressCount}</strong> מתוך{' '}
-                  <strong>{totalToCalculate}</strong> מתכונים
+                  <strong>{totalTarget}</strong> מתכונים
                 </span>
                 {currentRecipeTitle && (
                   <span className="text-slate-700 font-medium truncate max-w-[180px]">
@@ -308,7 +446,7 @@ export const BatchNutritionModal: React.FC<BatchNutritionModalProps> = ({
           {log.length > 0 && (
             <div className="space-y-1.5">
               <div className="text-xs font-bold text-slate-700">יומן חישוב בזמן אמת:</div>
-              <div className="p-3 bg-slate-900 text-slate-100 rounded-2xl font-mono text-[11px] max-h-48 overflow-y-auto space-y-1.5 shadow-inner">
+              <div className="p-3 bg-slate-900 text-slate-100 rounded-2xl font-mono text-[11px] max-h-40 overflow-y-auto space-y-1.5 shadow-inner">
                 {log.map((item, idx) => (
                   <div key={idx} className="flex items-center justify-between gap-2">
                     <span className="truncate">
@@ -334,10 +472,12 @@ export const BatchNutritionModal: React.FC<BatchNutritionModalProps> = ({
             <div className="p-4 bg-emerald-50 border border-emerald-200 rounded-2xl text-center space-y-1 animate-in zoom-in-95 duration-200">
               <div className="text-2xl">🎉</div>
               <div className="font-bold text-sm text-emerald-950">
-                כל הערכים התזונתיים חושבו ונשמרו בהצלחה!
+                {calcMode === 'force-all'
+                  ? 'כל המתכונים בספר חושבו מחדש ונשמרו בהצלחה!'
+                  : 'כל הערכים התזונתיים החסרים חושבו בהצלחה!'}
               </div>
               <div className="text-xs text-emerald-800">
-                המתכונים שלך מעודכנים כעת עם תגיות, קלוריות, חלבונים וכפתורי סינון מהירים.
+                ספר המתכונים שלך מעודכן כעת עם תגיות, קלוריות, חלבונים וכפתורי סינון מהירים.
               </div>
             </div>
           )}
@@ -376,15 +516,28 @@ export const BatchNutritionModal: React.FC<BatchNutritionModalProps> = ({
             ) : (
               <button
                 onClick={handleStart}
-                disabled={stats?.missingCount === 0 && !isDone}
-                className="px-5 py-2.5 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white rounded-xl text-xs font-bold shadow-md transition flex items-center gap-1.5 disabled:opacity-50"
+                disabled={targetCount === 0 && !isDone}
+                className={`px-5 py-2.5 text-white rounded-xl text-xs font-bold shadow-md transition flex items-center gap-1.5 disabled:opacity-50 ${
+                  calcMode === 'force-all'
+                    ? 'bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700'
+                    : 'bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700'
+                }`}
               >
-                <Play className="w-3.5 h-3.5 fill-white" />
-                <span>
-                  {stats?.missingCount === 0
-                    ? 'כל המתכונים כבר מחושבים ✅'
-                    : `הפעל חישוב ל-${stats?.missingCount ?? ''} מתכונים 🥗`}
-                </span>
+                {calcMode === 'force-all' ? (
+                  <>
+                    <RefreshCw className="w-3.5 h-3.5" />
+                    <span>הפעל חישוב מחדש לכל {stats?.totalCount ?? ''} המתכונים 🔄</span>
+                  </>
+                ) : (
+                  <>
+                    <Play className="w-3.5 h-3.5 fill-white" />
+                    <span>
+                      {stats?.missingCount === 0
+                        ? 'כל המתכונים כבר מחושבים ✅'
+                        : `הפעל חישוב ל-${stats?.missingCount ?? ''} מתכונים חסרים 🥗`}
+                    </span>
+                  </>
+                )}
               </button>
             )}
           </div>

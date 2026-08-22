@@ -37,7 +37,7 @@ export async function POST(req: NextRequest) {
     await ensureDatabaseSchema();
 
     const body = await req.json().catch(() => ({}));
-    const { recipeIds, limit = 5, onlyMissing = true, modelOverride } = body;
+    const { recipeIds, limit = 3, onlyMissing = true, forceAll = false, offset = 0, modelOverride } = body;
 
     let recipesToProcess;
 
@@ -45,8 +45,15 @@ export async function POST(req: NextRequest) {
       recipesToProcess = await prisma.recipe.findMany({
         where: { id: { in: recipeIds } },
       });
+    } else if (forceAll) {
+      // Force re-calculating all recipes, ordered by createdAt
+      recipesToProcess = await prisma.recipe.findMany({
+        skip: offset,
+        take: limit,
+        orderBy: { createdAt: 'desc' },
+      });
     } else {
-      // Find recipes needing calculation
+      // Default: Find recipes needing calculation
       recipesToProcess = await prisma.recipe.findMany({
         where: onlyMissing
           ? {
@@ -60,15 +67,7 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    const totalMissingBefore = await prisma.recipe.count({
-      where: {
-        OR: [
-          { caloriesPerServing: null },
-          { proteinGrams: null },
-        ],
-      },
-    });
-
+    const totalCount = await prisma.recipe.count();
     const results = [];
 
     for (const recipe of recipesToProcess) {
@@ -105,8 +104,8 @@ export async function POST(req: NextRequest) {
           nutrition,
         });
 
-        // Pacing delay between recipes (1.5s) to stay well under rate limits
-        await new Promise((r) => setTimeout(r, 1500));
+        // Safe pacing delay between recipes (1.2s) to stay under rate limits
+        await new Promise((r) => setTimeout(r, 1200));
       } catch (err: any) {
         console.error(`Error estimating recipe ${recipe.title}:`, err);
         results.push({
@@ -130,7 +129,9 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({
       processedCount: results.length,
       remainingMissing,
-      totalMissingBefore,
+      totalCount,
+      nextOffset: forceAll ? offset + recipesToProcess.length : 0,
+      hasMore: forceAll ? offset + recipesToProcess.length < totalCount : remainingMissing > 0,
       results,
     });
   } catch (error: any) {
