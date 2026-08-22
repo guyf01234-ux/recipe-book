@@ -121,7 +121,7 @@ async function generateWithFallback(
   let lastError: any = null;
 
   for (const model of modelsToTry) {
-    for (let attempt = 0; attempt < 3; attempt++) {
+    for (let attempt = 0; attempt < 4; attempt++) {
       try {
         const response = await ai.models.generateContent({
           model: model,
@@ -138,9 +138,10 @@ async function generateWithFallback(
           errStr.includes('Quota exceeded') ||
           errStr.includes('rate-limits');
 
-        if (isRateLimit && attempt < 2) {
-          const waitTime = (attempt + 1) * 3500;
-          console.warn(`[Gemini API] Rate limit (429) on ${model}, waiting ${waitTime / 1000}s before retry (attempt ${attempt + 1}/2)...`);
+        if (isRateLimit && attempt < 3) {
+          // Exponential backoff: 3s, 6s, 12s + jitter
+          const waitTime = Math.min(15000, Math.pow(2, attempt) * 3000 + Math.random() * 1000);
+          console.warn(`[Gemini API] Rate limit (429) on ${model}, waiting ${(waitTime / 1000).toFixed(1)}s before retry (attempt ${attempt + 1}/4)...`);
           await sleep(waitTime);
           continue;
         }

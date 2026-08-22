@@ -1,7 +1,15 @@
 'use client';
 
 import React from 'react';
-import { BookOpen, Plus, UploadCloud, Sparkles, Settings as SettingsIcon, ChefHat } from 'lucide-react';
+import {
+  BookOpen,
+  Plus,
+  UploadCloud,
+  Sparkles,
+  Settings as SettingsIcon,
+  ChefHat,
+  Salad,
+} from 'lucide-react';
 
 interface HeaderProps {
   recipeCount: number;
@@ -10,6 +18,7 @@ interface HeaderProps {
   onOpenImportModal: () => void;
   onOpenAIChat: () => void;
   onOpenSettings: () => void;
+  onOpenBatchNutrition?: () => void;
   onReopenBook?: () => void;
 }
 
@@ -20,6 +29,7 @@ export const Header: React.FC<HeaderProps> = ({
   onOpenImportModal,
   onOpenAIChat,
   onOpenSettings,
+  onOpenBatchNutrition,
   onReopenBook,
 }) => {
   return (
@@ -50,7 +60,7 @@ export const Header: React.FC<HeaderProps> = ({
         </div>
 
         {/* Action Buttons */}
-        <div className="flex items-center flex-wrap gap-2 sm:gap-3">
+        <div className="flex items-center flex-wrap gap-2 sm:gap-2.5">
           {/* Replay Book Intro */}
           {onReopenBook && (
             <button
@@ -63,13 +73,27 @@ export const Header: React.FC<HeaderProps> = ({
             </button>
           )}
 
+          {/* Batch Nutrition Calculator Button */}
+          {onOpenBatchNutrition && (
+            <button
+              onClick={onOpenBatchNutrition}
+              title="חישוב ערכים תזונתיים לכל הספר באצווה"
+              className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-emerald-50 text-emerald-800 border border-emerald-200/90 font-bold text-xs hover:bg-emerald-100 transition active:scale-95 shadow-2xs"
+            >
+              <Salad className="w-4 h-4 text-emerald-600" />
+              <span className="hidden md:inline">חישוב ערכים תזונתיים 🥗</span>
+              <span className="md:hidden">ערכים 🥗</span>
+            </button>
+          )}
+
           {/* AI Assistant Button */}
           <button
             onClick={onOpenAIChat}
             className="flex items-center gap-2 px-3.5 py-2 rounded-xl bg-gradient-to-r from-purple-600 to-indigo-600 text-white font-medium text-sm hover:from-purple-700 hover:to-indigo-700 transition shadow-sm shadow-purple-500/20 active:scale-95"
           >
             <Sparkles className="w-4 h-4" />
-            <span>שאל את השף AI</span>
+            <span className="hidden sm:inline">שאל את השף AI</span>
+            <span className="sm:hidden">שף AI</span>
           </button>
 
           {/* Import File Button */}
@@ -78,7 +102,8 @@ export const Header: React.FC<HeaderProps> = ({
             className="flex items-center gap-2 px-3.5 py-2 rounded-xl bg-amber-50 text-amber-800 border border-amber-200/80 font-medium text-sm hover:bg-amber-100 transition active:scale-95"
           >
             <UploadCloud className="w-4 h-4 text-amber-600" />
-            <span>ייבוא קובץ / גרירה</span>
+            <span className="hidden sm:inline">ייבוא קובץ / גרירה</span>
+            <span className="sm:hidden">ייבוא</span>
           </button>
 
           {/* Add Recipe Button */}
@@ -87,7 +112,8 @@ export const Header: React.FC<HeaderProps> = ({
             className="flex items-center gap-2 px-3.5 py-2 rounded-xl bg-slate-900 text-white font-medium text-sm hover:bg-slate-800 transition active:scale-95"
           >
             <Plus className="w-4 h-4" />
-            <span>מתכון חדש</span>
+            <span className="hidden sm:inline">מתכון חדש</span>
+            <span className="sm:hidden">חדש</span>
           </button>
 
           {/* Settings Button */}

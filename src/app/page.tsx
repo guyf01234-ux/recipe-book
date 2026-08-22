@@ -9,6 +9,7 @@ import { RecipeFormModal } from '@/components/RecipeFormModal';
 import { DropZoneModal } from '@/components/DropZoneModal';
 import { CategoryManagerModal } from '@/components/CategoryManagerModal';
 import { SettingsModal } from '@/components/SettingsModal';
+import { BatchNutritionModal } from '@/components/BatchNutritionModal';
 import { AIChatDrawer } from '@/components/AIChatDrawer';
 import { BookOpeningIntro } from '@/components/BookOpeningIntro';
 import {
@@ -53,6 +54,7 @@ export default function Home() {
   const [isAIChatOpen, setIsAIChatOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isCategoryManagerOpen, setIsCategoryManagerOpen] = useState(false);
+  const [isBatchNutritionOpen, setIsBatchNutritionOpen] = useState(false);
   const [viewingRecipe, setViewingRecipe] = useState<Recipe | null>(null);
   const [editingRecipe, setEditingRecipe] = useState<Recipe | null>(null);
   const [aiInitialPrompt, setAiInitialPrompt] = useState<string>('');
@@ -288,6 +290,7 @@ export default function Home() {
           setIsAIChatOpen(true);
         }}
         onOpenSettings={() => setIsSettingsOpen(true)}
+        onOpenBatchNutrition={() => setIsBatchNutritionOpen(true)}
         onReopenBook={() => setShowBookIntro(true)}
       />
 
@@ -547,6 +550,15 @@ export default function Home() {
         onClose={() => setIsCategoryManagerOpen(false)}
         categories={categories}
         onRefresh={handleRefreshAll}
+      />
+
+      {/* Batch Nutrition Modal */}
+      <BatchNutritionModal
+        isOpen={isBatchNutritionOpen}
+        onClose={() => setIsBatchNutritionOpen(false)}
+        onComplete={handleRefreshAll}
+        nutritionSettings={nutritionSettings}
+        activeModel={selectedAIModel}
       />
 
       {/* Settings Modal */}
