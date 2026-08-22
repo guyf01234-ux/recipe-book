@@ -3,7 +3,7 @@ import mammoth from 'mammoth';
 import pdfParse from 'pdf-parse';
 // @ts-ignore
 import WordExtractor from 'word-extractor';
-import { parseRecipeWithGemini, getGeminiClient, getActiveGeminiModel, FALLBACK_MODELS } from '@/lib/gemini';
+import { parseRecipeWithGemini, getGeminiClient, getActiveGeminiModel, FALLBACK_MODELS, robustJsonParse } from '@/lib/gemini';
 import { ParsedRecipe } from '@/types';
 
 export const config = {
@@ -183,7 +183,7 @@ export async function POST(req: NextRequest) {
           });
 
           const cleaned = (response.text || '').replace(/```json/g, '').replace(/```/g, '').trim();
-          parsed = JSON.parse(cleaned) as ParsedRecipe;
+          parsed = robustJsonParse<ParsedRecipe>(cleaned);
           break;
         } catch (err: any) {
           lastError = err;

@@ -53,6 +53,55 @@ function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+export function robustJsonParse<T = any>(jsonStr: string): T {
+  try {
+    return JSON.parse(jsonStr);
+  } catch (e) {
+    // Attempt 1: Replace unescaped double quotes inside Hebrew words (e.g. תפו"א -> תפו'א or ק"ג -> ק'ג)
+    let fixed = jsonStr.replace(/([\u0590-\u05FF])"([\u0590-\u05FF])/g, "$1'$2");
+    fixed = fixed.replace(/([\u0590-\u05FF])"(?!\s*[,:\]\}])/g, "$1'$2");
+    fixed = fixed.replace(/(?<![:\[,]\s*)"([\u0590-\u05FF])/g, "'$1");
+
+    try {
+      return JSON.parse(fixed);
+    } catch (e2) {
+      // Attempt 2: Regex extraction fallback for recipe schema
+      const extractArray = (key: string): string[] => {
+        const match = jsonStr.match(new RegExp(`"${key}"\\s*:\\s*\\[([\\s\\S]*?)\\]`));
+        if (!match) return [];
+        return match[1]
+          .split('\n')
+          .map((line) =>
+            line
+              .trim()
+              .replace(/^"/, '')
+              .replace(/",?$/, '')
+              .replace(/\\"/g, '"')
+              .trim()
+          )
+          .filter(Boolean);
+      };
+
+      const extractString = (key: string): string => {
+        const match = jsonStr.match(new RegExp(`"${key}"\\s*:\\s*"([\\s\\S]*?)(?<!\\\\)"`));
+        return match ? match[1] : '';
+      };
+
+      return {
+        title: extractString('title'),
+        description: extractString('description'),
+        servings: extractString('servings'),
+        prepTime: extractString('prepTime'),
+        cookTime: extractString('cookTime'),
+        ingredients: extractArray('ingredients'),
+        instructions: extractArray('instructions'),
+        notes: extractString('notes'),
+        suggestedCategory: extractString('suggestedCategory'),
+      } as unknown as T;
+    }
+  }
+}
+
 async function generateWithFallback(
   ai: GoogleGenAI,
   primaryModel: string,
@@ -147,6 +196,8 @@ export async function parseRecipeWithGemini(
   "suggestedCategory": "הצעת קטגוריה מתאימה בעברית מילה אחת או שתיים (למשל: 'איטלקי', 'אסייתי', 'עוגות וקינוחים', 'עיקריות', 'מרקים', 'סלטים', 'מאפים')"
 }
 
+חשוב מאוד: אם יש במצרכים או בהוראות גרשיים עבריים או קיצורים (כמו תפו"א, ק"ג, ס"מ), השתמש בגרש בודד (') כדי לשמור על תקינות מחרוזות ה-JSON!
+
 הנה תוכן המסמך:
 ---
 ${rawText}
@@ -163,7 +214,7 @@ ${rawText}
 
     const text = response.text || '';
     const cleaned = text.replace(/```json/g, '').replace(/```/g, '').trim();
-    const parsed = JSON.parse(cleaned) as ParsedRecipe;
+    const parsed = robustJsonParse<ParsedRecipe>(cleaned);
 
     return {
       title: parsed.title || '',
