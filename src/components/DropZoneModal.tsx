@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import {
   X,
   UploadCloud,
@@ -20,8 +20,13 @@ import {
   Check,
   RotateCcw,
   Layers,
+  CopyCheck,
+  ShieldCheck,
+  RefreshCw,
+  Info,
 } from 'lucide-react';
-import { Category, ParsedRecipe } from '@/types';
+import { Category, ParsedRecipe, Recipe } from '@/types';
+import { normalizeHebrew } from '@/lib/hebrewSearch';
 
 interface DropZoneModalProps {
   isOpen: boolean;
@@ -39,6 +44,10 @@ interface BatchItem {
   selectedCategoryIds: string[];
   errorMessage?: string;
   saved?: boolean;
+  isDuplicate?: boolean;
+  duplicateReason?: string;
+  existingRecipeId?: string;
+  existingRecipeTitle?: string;
 }
 
 const SUPPORTED_EXTENSIONS = ['.docx', '.doc', '.pdf', '.txt', '.md', '.jpg', '.jpeg', '.png', '.webp'];
@@ -55,9 +64,26 @@ export const DropZoneModal: React.FC<DropZoneModalProps> = ({
   const [previewItem, setPreviewItem] = useState<BatchItem | null>(null);
   const [globalCategoryId, setGlobalCategoryId] = useState<string>('');
   const [savingAll, setSavingAll] = useState(false);
+  const [autoSkipDuplicates, setAutoSkipDuplicates] = useState(true);
+  const [existingDbRecipes, setExistingDbRecipes] = useState<Recipe[]>([]);
+  const [queueFilter, setQueueFilter] = useState<'all' | 'ready' | 'duplicates' | 'saved' | 'errors'>('all');
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const folderInputRef = useRef<HTMLInputElement>(null);
+
+  // Fetch current database recipes when modal opens to check for duplicates
+  useEffect(() => {
+    if (isOpen) {
+      fetch('/api/recipes')
+        .then((res) => (res.ok ? res.json() : []))
+        .then((data: Recipe[]) => {
+          if (Array.isArray(data)) {
+            setExistingDbRecipes(data);
+          }
+        })
+        .catch((err) => console.error('Could not load existing recipes for duplicate check:', err));
+    }
+  }, [isOpen]);
 
   if (!isOpen) return null;
 
@@ -70,29 +96,80 @@ export const DropZoneModal: React.FC<DropZoneModalProps> = ({
     const validFiles = files.filter((f) => isSupportedFile(f.name));
     if (validFiles.length === 0) return;
 
-    const newItems: BatchItem[] = validFiles.map((file) => ({
-      id: `${file.name}-${Date.now()}-${Math.random()}`,
-      file,
-      name: file.name,
-      status: 'pending',
-      selectedCategoryIds: globalCategoryId ? [globalCategoryId] : [],
-    }));
+    // Track duplicates already inside this new batch by filename
+    const seenNames = new Set<string>();
+
+    const newItems: BatchItem[] = validFiles.map((file) => {
+      const isDuplicateInCurrentAdd = seenNames.has(file.name);
+      seenNames.add(file.name);
+
+      return {
+        id: `${file.name}-${Date.now()}-${Math.random()}`,
+        file,
+        name: file.name,
+        status: 'pending',
+        selectedCategoryIds: globalCategoryId ? [globalCategoryId] : [],
+        isDuplicate: isDuplicateInCurrentAdd,
+        duplicateReason: isDuplicateInCurrentAdd ? 'קובץ עם שם זהה מופיע יותר מפעם אחת באצווה' : undefined,
+      };
+    });
 
     setBatchItems((prev) => [...prev, ...newItems]);
-    // Auto-start processing
     startBatchProcessing([...batchItems, ...newItems]);
+  };
+
+  const checkDuplicate = (
+    parsed: ParsedRecipe,
+    currentFile: File,
+    allBatchItems: BatchItem[],
+    currentItemId: string
+  ): { isDuplicate: boolean; reason?: string; existingId?: string; existingTitle?: string } => {
+    const normNewTitle = normalizeHebrew(parsed.title || '');
+    const normRaw = normalizeHebrew(parsed.rawContent || '');
+
+    // 1. Check against Database
+    const dbMatch = existingDbRecipes.find((dbR) => {
+      const normDbTitle = normalizeHebrew(dbR.title || '');
+      if (normDbTitle === normNewTitle && normNewTitle !== '') return true;
+      if (dbR.rawContent && normRaw && normalizeHebrew(dbR.rawContent) === normRaw) return true;
+      return false;
+    });
+
+    if (dbMatch) {
+      return {
+        isDuplicate: true,
+        reason: `מתכון זהה כבר קיים במאגר: "${dbMatch.title}"`,
+        existingId: dbMatch.id,
+        existingTitle: dbMatch.title,
+      };
+    }
+
+    // 2. Check against other items in the batch
+    const batchMatch = allBatchItems.find((bItem) => {
+      if (bItem.id === currentItemId || !bItem.parsedRecipe) return false;
+      const normBTitle = normalizeHebrew(bItem.parsedRecipe.title || '');
+      return normBTitle === normNewTitle && normNewTitle !== '';
+    });
+
+    if (batchMatch && batchMatch.parsedRecipe) {
+      return {
+        isDuplicate: true,
+        reason: `כפילות בתוך התור: זהה לקובץ "${batchMatch.name}"`,
+        existingTitle: batchMatch.parsedRecipe.title,
+      };
+    }
+
+    return { isDuplicate: false };
   };
 
   const startBatchProcessing = async (items: BatchItem[]) => {
     setIsProcessingBatch(true);
 
     const pending = items.filter((item) => item.status === 'pending');
-    // Process with concurrency of 2
     const CONCURRENCY = 2;
     let index = 0;
 
     const processItem = async (item: BatchItem) => {
-      // Update status to processing
       setBatchItems((prev) =>
         prev.map((i) => (i.id === item.id ? { ...i, status: 'processing' } : i))
       );
@@ -128,6 +205,9 @@ export const DropZoneModal: React.FC<DropZoneModalProps> = ({
           }
         }
 
+        // Check for duplicates
+        const dupCheck = checkDuplicate(recipe, item.file, items, item.id);
+
         setBatchItems((prev) =>
           prev.map((i) =>
             i.id === item.id
@@ -136,6 +216,10 @@ export const DropZoneModal: React.FC<DropZoneModalProps> = ({
                   status: 'done',
                   parsedRecipe: recipe,
                   selectedCategoryIds: catIds,
+                  isDuplicate: dupCheck.isDuplicate,
+                  duplicateReason: dupCheck.reason,
+                  existingRecipeId: dupCheck.existingId,
+                  existingRecipeTitle: dupCheck.existingTitle,
                 }
               : i
           )
@@ -252,8 +336,46 @@ export const DropZoneModal: React.FC<DropZoneModalProps> = ({
     });
 
     if (res.ok) {
+      const savedData = await res.json();
+      // Add to local existing list
+      setExistingDbRecipes((prev) => [...prev, savedData]);
       setBatchItems((prev) =>
-        prev.map((i) => (i.id === item.id ? { ...i, saved: true } : i))
+        prev.map((i) => (i.id === item.id ? { ...i, saved: true, isDuplicate: false } : i))
+      );
+      onRecipeSaved();
+      if (previewItem?.id === item.id) {
+        setPreviewItem(null);
+      }
+    }
+  };
+
+  // Overwrite existing recipe
+  const handleOverwriteExisting = async (item: BatchItem) => {
+    if (!item.existingRecipeId || !item.parsedRecipe) return;
+
+    const payload = {
+      title: item.parsedRecipe.title.trim(),
+      description: item.parsedRecipe.description?.trim() || undefined,
+      servings: item.parsedRecipe.servings?.trim() || undefined,
+      prepTime: item.parsedRecipe.prepTime?.trim() || undefined,
+      cookTime: item.parsedRecipe.cookTime?.trim() || undefined,
+      ingredients: item.parsedRecipe.ingredients.filter((i) => i.trim()),
+      instructions: item.parsedRecipe.instructions.filter((i) => i.trim()),
+      notes: item.parsedRecipe.notes?.trim() || undefined,
+      sourceFile: item.name,
+      rawContent: item.parsedRecipe.rawContent || undefined,
+      categoryIds: item.selectedCategoryIds,
+    };
+
+    const res = await fetch(`/api/recipes/${item.existingRecipeId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+
+    if (res.ok) {
+      setBatchItems((prev) =>
+        prev.map((i) => (i.id === item.id ? { ...i, saved: true, isDuplicate: false } : i))
       );
       onRecipeSaved();
       if (previewItem?.id === item.id) {
@@ -263,7 +385,14 @@ export const DropZoneModal: React.FC<DropZoneModalProps> = ({
   };
 
   const handleSaveAll = async () => {
-    const readyItems = batchItems.filter((i) => i.status === 'done' && !i.saved);
+    // Determine which items to save
+    let readyItems = batchItems.filter((i) => i.status === 'done' && !i.saved);
+
+    // If auto-skip duplicates is enabled, skip duplicate items
+    if (autoSkipDuplicates) {
+      readyItems = readyItems.filter((i) => !i.isDuplicate);
+    }
+
     if (readyItems.length === 0) return;
 
     setSavingAll(true);
@@ -298,8 +427,21 @@ export const DropZoneModal: React.FC<DropZoneModalProps> = ({
     setIsProcessingBatch(false);
   };
 
+  // Metrics
   const doneCount = batchItems.filter((i) => i.status === 'done').length;
   const savedCount = batchItems.filter((i) => i.saved).length;
+  const duplicateCount = batchItems.filter((i) => i.isDuplicate && !i.saved).length;
+  const uniqueReadyCount = batchItems.filter((i) => i.status === 'done' && !i.saved && !i.isDuplicate).length;
+  const errorCount = batchItems.filter((i) => i.status === 'error').length;
+
+  // Filtered queue items
+  const filteredBatchItems = batchItems.filter((item) => {
+    if (queueFilter === 'ready') return item.status === 'done' && !item.saved && !item.isDuplicate;
+    if (queueFilter === 'duplicates') return item.isDuplicate && !item.saved;
+    if (queueFilter === 'saved') return item.saved;
+    if (queueFilter === 'errors') return item.status === 'error';
+    return true;
+  });
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 modal-overlay">
@@ -313,7 +455,7 @@ export const DropZoneModal: React.FC<DropZoneModalProps> = ({
             <div>
               <h2 className="text-lg font-bold text-slate-900">ייבוא קבצים ותיקיות מתכונים</h2>
               <p className="text-xs text-slate-500">
-                ייבוא קובץ בודד, מספר קבצים בבת אחת, או תיקייה שלמה מ-Google Drive / המחשב
+                ייבוא קבצי Word (.docx, .doc), PDF, ותמונות עם זיהוי כפילויות חכם
               </p>
             </div>
           </div>
@@ -400,48 +542,54 @@ export const DropZoneModal: React.FC<DropZoneModalProps> = ({
             </div>
           </div>
 
-          {/* Batch Progress Bar & Controls */}
+          {/* Batch Progress Bar & Duplicate Management Controls */}
           {batchItems.length > 0 && (
-            <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 space-y-3">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <div className="flex items-center gap-2">
-                  <span className="font-bold text-sm text-slate-900">
-                    תור פענוח מתכונים ({batchItems.length} קבצים)
-                  </span>
-                  {isProcessingBatch && (
-                    <span className="flex items-center gap-1 text-xs text-amber-700 bg-amber-100 px-2 py-0.5 rounded-full font-medium">
-                      <Loader2 className="w-3 h-3 animate-spin" />
-                      מפענח עם Gemini...
+            <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 space-y-3.5">
+              {/* Header with Stats & Duplicate Auto-Skip Toggle */}
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-200/80 pb-3">
+                <div className="space-y-1">
+                  <div className="flex items-center gap-2">
+                    <span className="font-bold text-sm text-slate-900">
+                      תור פענוח מתכונים ({batchItems.length} קבצים)
                     </span>
-                  )}
+                    {isProcessingBatch && (
+                      <span className="flex items-center gap-1 text-xs text-amber-700 bg-amber-100 px-2 py-0.5 rounded-full font-medium">
+                        <Loader2 className="w-3 h-3 animate-spin" />
+                        מפענח עם Gemini...
+                      </span>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-2 text-xs text-slate-500 flex-wrap">
+                    <span className="text-emerald-700 font-medium">{uniqueReadyCount} ייחודיים לשמירה</span>
+                    {duplicateCount > 0 && (
+                      <>
+                        <span>•</span>
+                        <span className="text-amber-700 font-medium">{duplicateCount} כפילויות זוהו</span>
+                      </>
+                    )}
+                    {savedCount > 0 && (
+                      <>
+                        <span>•</span>
+                        <span className="text-slate-600">{savedCount} כבר נשמרו</span>
+                      </>
+                    )}
+                  </div>
                 </div>
 
-                {/* Bulk Actions */}
-                <div className="flex items-center gap-2">
-                  {/* Default Category Selector */}
-                  <select
-                    value={globalCategoryId}
-                    onChange={(e) => {
-                      const val = e.target.value;
-                      setGlobalCategoryId(val);
-                      if (val) {
-                        setBatchItems((prev) =>
-                          prev.map((item) => ({
-                            ...item,
-                            selectedCategoryIds: [val],
-                          }))
-                        );
-                      }
-                    }}
-                    className="text-xs bg-white border border-slate-200 rounded-xl px-2.5 py-1.5 text-slate-700 focus:outline-none focus:ring-1 focus:ring-amber-500"
-                  >
-                    <option value="">שיוך קטגוריה אוטומטי (לפי AI)</option>
-                    {categories.map((c) => (
-                      <option key={c.id} value={c.id}>
-                        שייך הכל ל: {c.name}
-                      </option>
-                    ))}
-                  </select>
+                {/* Auto-Skip Toggle */}
+                <div className="flex items-center gap-3 self-end sm:self-auto">
+                  <label className="flex items-center gap-2 cursor-pointer bg-white px-3 py-1.5 rounded-xl border border-slate-200 hover:border-amber-400 transition shadow-sm">
+                    <input
+                      type="checkbox"
+                      checked={autoSkipDuplicates}
+                      onChange={(e) => setAutoSkipDuplicates(e.target.checked)}
+                      className="rounded border-slate-300 text-amber-600 focus:ring-amber-500 w-3.5 h-3.5 cursor-pointer"
+                    />
+                    <div className="flex items-center gap-1.5 text-xs font-semibold text-slate-700">
+                      <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" />
+                      <span>דלג אוטומטית על כפילויות</span>
+                    </div>
+                  </label>
 
                   <button
                     onClick={handleResetAll}
@@ -450,6 +598,94 @@ export const DropZoneModal: React.FC<DropZoneModalProps> = ({
                     נקה תור
                   </button>
                 </div>
+              </div>
+
+              {/* Category Assignment & Queue Filters */}
+              <div className="flex flex-wrap items-center justify-between gap-2 pt-0.5">
+                {/* Filter Pills */}
+                <div className="flex items-center gap-1 text-xs">
+                  <button
+                    onClick={() => setQueueFilter('all')}
+                    className={`px-2.5 py-1 rounded-lg font-medium transition ${
+                      queueFilter === 'all'
+                        ? 'bg-slate-900 text-white'
+                        : 'bg-white text-slate-600 hover:bg-slate-200/70 border border-slate-200'
+                    }`}
+                  >
+                    הכל ({batchItems.length})
+                  </button>
+                  <button
+                    onClick={() => setQueueFilter('ready')}
+                    className={`px-2.5 py-1 rounded-lg font-medium transition ${
+                      queueFilter === 'ready'
+                        ? 'bg-emerald-600 text-white'
+                        : 'bg-white text-slate-600 hover:bg-slate-200/70 border border-slate-200'
+                    }`}
+                  >
+                    ייחודיים ({uniqueReadyCount})
+                  </button>
+                  {duplicateCount > 0 && (
+                    <button
+                      onClick={() => setQueueFilter('duplicates')}
+                      className={`px-2.5 py-1 rounded-lg font-medium transition ${
+                        queueFilter === 'duplicates'
+                          ? 'bg-amber-600 text-white'
+                          : 'bg-white text-amber-700 hover:bg-amber-50 border border-amber-300'
+                      }`}
+                    >
+                      כפילויות ({duplicateCount})
+                    </button>
+                  )}
+                  {savedCount > 0 && (
+                    <button
+                      onClick={() => setQueueFilter('saved')}
+                      className={`px-2.5 py-1 rounded-lg font-medium transition ${
+                        queueFilter === 'saved'
+                          ? 'bg-slate-700 text-white'
+                          : 'bg-white text-slate-600 hover:bg-slate-200/70 border border-slate-200'
+                      }`}
+                    >
+                      נשמרו ({savedCount})
+                    </button>
+                  )}
+                  {errorCount > 0 && (
+                    <button
+                      onClick={() => setQueueFilter('errors')}
+                      className={`px-2.5 py-1 rounded-lg font-medium transition ${
+                        queueFilter === 'errors'
+                          ? 'bg-red-600 text-white'
+                          : 'bg-white text-red-600 hover:bg-red-50 border border-red-200'
+                      }`}
+                    >
+                      שגיאות ({errorCount})
+                    </button>
+                  )}
+                </div>
+
+                {/* Bulk Category selector */}
+                <select
+                  value={globalCategoryId}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    setGlobalCategoryId(val);
+                    if (val) {
+                      setBatchItems((prev) =>
+                        prev.map((item) => ({
+                          ...item,
+                          selectedCategoryIds: [val],
+                        }))
+                      );
+                    }
+                  }}
+                  className="text-xs bg-white border border-slate-200 rounded-xl px-2.5 py-1.5 text-slate-700 focus:outline-none focus:ring-1 focus:ring-amber-500"
+                >
+                  <option value="">שיוך קטגוריה אוטומטי (לפי AI)</option>
+                  {categories.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      שייך הכל ל: {c.name}
+                    </option>
+                  ))}
+                </select>
               </div>
 
               {/* Progress bar */}
@@ -463,12 +699,16 @@ export const DropZoneModal: React.FC<DropZoneModalProps> = ({
               </div>
 
               {/* File list items */}
-              <div className="divide-y divide-slate-200/70 max-h-60 overflow-y-auto bg-white rounded-xl border border-slate-200">
-                {batchItems.map((item) => {
+              <div className="divide-y divide-slate-200/70 max-h-64 overflow-y-auto bg-white rounded-xl border border-slate-200">
+                {filteredBatchItems.map((item) => {
                   return (
                     <div
                       key={item.id}
-                      className="p-3 flex items-center justify-between gap-3 text-xs hover:bg-slate-50 transition"
+                      className={`p-3 flex items-center justify-between gap-3 text-xs transition ${
+                        item.isDuplicate && !item.saved
+                          ? 'bg-amber-50/40 hover:bg-amber-50/70'
+                          : 'hover:bg-slate-50'
+                      }`}
                     >
                       {/* File details & Status */}
                       <div className="flex items-center gap-2.5 min-w-0 flex-1">
@@ -478,8 +718,10 @@ export const DropZoneModal: React.FC<DropZoneModalProps> = ({
                           ) : item.status === 'done' ? (
                             item.saved ? (
                               <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                            ) : item.isDuplicate ? (
+                              <CopyCheck className="w-4 h-4 text-amber-600" />
                             ) : (
-                              <Check className="w-4 h-4 text-amber-600" />
+                              <Check className="w-4 h-4 text-emerald-600" />
                             )
                           ) : item.status === 'error' ? (
                             <AlertCircle className="w-4 h-4 text-red-500" />
@@ -489,14 +731,27 @@ export const DropZoneModal: React.FC<DropZoneModalProps> = ({
                         </div>
 
                         <div className="min-w-0 flex-1">
-                          <div className="font-semibold text-slate-900 truncate">
-                            {item.parsedRecipe?.title || item.name}
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="font-semibold text-slate-900 truncate">
+                              {item.parsedRecipe?.title || item.name}
+                            </span>
+                            {item.isDuplicate && !item.saved && (
+                              <span className="text-[10px] bg-amber-100 text-amber-800 font-bold px-2 py-0.5 rounded-full border border-amber-300/80 flex items-center gap-1">
+                                ⚠️ כפילות זוהתה
+                              </span>
+                            )}
                           </div>
-                          <div className="text-[11px] text-slate-400 flex items-center gap-2">
+
+                          <div className="text-[11px] text-slate-400 flex items-center gap-2 flex-wrap">
                             <span>{item.name}</span>
                             {item.status === 'done' && item.parsedRecipe?.suggestedCategory && (
                               <span className="text-amber-700 bg-amber-50 px-1.5 py-0.2 rounded border border-amber-200/50">
                                 {item.parsedRecipe.suggestedCategory}
+                              </span>
+                            )}
+                            {item.isDuplicate && item.duplicateReason && (
+                              <span className="text-amber-700 italic">
+                                ({item.duplicateReason})
                               </span>
                             )}
                             {item.errorMessage && (
@@ -516,11 +771,32 @@ export const DropZoneModal: React.FC<DropZoneModalProps> = ({
                               <span className="text-[11px] text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-md font-medium border border-emerald-200">
                                 נשמר לספר
                               </span>
+                            ) : item.isDuplicate ? (
+                              <>
+                                {/* Action buttons for duplicates */}
+                                {item.existingRecipeId ? (
+                                  <button
+                                    onClick={() => handleOverwriteExisting(item)}
+                                    className="px-2.5 py-1 rounded-lg bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 text-[11px] font-medium"
+                                    title="עדכן את המתכון הקיים במאגר עם נתוני קובץ זה"
+                                  >
+                                    עדכן קיים
+                                  </button>
+                                ) : null}
+
+                                <button
+                                  onClick={() => handleSingleSave(item)}
+                                  className="px-2 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 text-[11px] font-medium"
+                                  title="שמור בכל זאת כמתכון חדש נוסף"
+                                >
+                                  שמור כעותק
+                                </button>
+                              </>
                             ) : (
                               <>
                                 <button
                                   onClick={() => setPreviewItem(item)}
-                                  className="px-2 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 flex items-center gap-1 font-medium"
+                                  className="px-2 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 flex items-center gap-1 font-medium text-[11px]"
                                   title="צפייה ועריכה"
                                 >
                                   <Eye className="w-3 h-3" />
@@ -529,7 +805,7 @@ export const DropZoneModal: React.FC<DropZoneModalProps> = ({
 
                                 <button
                                   onClick={() => handleSingleSave(item)}
-                                  className="px-2.5 py-1 rounded-lg bg-amber-500 hover:bg-amber-600 text-white font-medium shadow-sm"
+                                  className="px-2.5 py-1 rounded-lg bg-amber-500 hover:bg-amber-600 text-white font-medium shadow-sm text-[11px]"
                                 >
                                   שמור
                                 </button>
@@ -541,7 +817,7 @@ export const DropZoneModal: React.FC<DropZoneModalProps> = ({
                         {item.status === 'error' && (
                           <button
                             onClick={() => handleRetryItem(item)}
-                            className="px-2 py-1 rounded-lg bg-red-50 hover:bg-red-100 text-red-700 font-medium flex items-center gap-1"
+                            className="px-2 py-1 rounded-lg bg-red-50 hover:bg-red-100 text-red-700 font-medium flex items-center gap-1 text-[11px]"
                           >
                             <RotateCcw className="w-3 h-3" />
                             <span>נסה שוב</span>
@@ -708,12 +984,23 @@ export const DropZoneModal: React.FC<DropZoneModalProps> = ({
 
         {/* Footer */}
         {batchItems.length > 0 && (
-          <div className="px-6 py-4 bg-slate-50 border-t border-slate-100 flex items-center justify-between">
-            <div className="text-xs text-slate-500">
+          <div className="px-6 py-4 bg-slate-50 border-t border-slate-100 flex flex-col sm:flex-row items-center justify-between gap-3">
+            <div className="text-xs text-slate-600 flex items-center gap-1.5">
               <span>
                 {doneCount} מתוך {batchItems.length} פוענחו
               </span>
-              {savedCount > 0 && <span> • {savedCount} כבר נשמרו</span>}
+              <span>•</span>
+              <span className="font-semibold text-emerald-700">
+                {uniqueReadyCount} ייחודיים מוכנים לשמירה
+              </span>
+              {duplicateCount > 0 && (
+                <>
+                  <span>•</span>
+                  <span className="text-amber-700 font-medium">
+                    {autoSkipDuplicates ? `${duplicateCount} כפילויות ידולגו` : `${duplicateCount} כפילויות זוהו`}
+                  </span>
+                </>
+              )}
             </div>
 
             <div className="flex items-center gap-2">
@@ -726,13 +1013,19 @@ export const DropZoneModal: React.FC<DropZoneModalProps> = ({
 
               <button
                 onClick={handleSaveAll}
-                disabled={savingAll || doneCount === 0 || doneCount === savedCount}
+                disabled={
+                  savingAll ||
+                  doneCount === 0 ||
+                  (autoSkipDuplicates ? uniqueReadyCount === 0 : doneCount === savedCount)
+                }
                 className="px-6 py-2.5 bg-amber-500 hover:bg-amber-600 disabled:opacity-50 text-white font-bold text-sm rounded-xl transition flex items-center gap-2 shadow-md shadow-amber-500/20"
               >
                 <CheckCircle2 className="w-4 h-4" />
                 <span>
                   {savingAll
                     ? 'שומר את כל המתכונים...'
+                    : autoSkipDuplicates
+                    ? `שמור את כל המתכונים הייחודיים (${uniqueReadyCount})`
                     : `שמור את כל המתכונים שפוענחו (${doneCount - savedCount})`}
                 </span>
               </button>
