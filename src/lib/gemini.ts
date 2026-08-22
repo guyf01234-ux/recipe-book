@@ -25,7 +25,6 @@ export async function getActiveGeminiModel(): Promise<string> {
     });
     if (setting?.value && setting.value.trim() !== '') {
       const val = setting.value.trim();
-      // If old deprecated 2.5 or unusable 3.1-pro on free tier is set, fallback to 3.7
       if (val.includes('2.5') || val.includes('2.0') || val.includes('1.5')) {
         await prisma.appSetting.update({
           where: { key: 'geminiModel' },
@@ -57,7 +56,6 @@ export function robustJsonParse<T = any>(jsonStr: string): T {
   try {
     return JSON.parse(jsonStr);
   } catch (e) {
-    // Attempt 1: Replace unescaped double quotes inside Hebrew words (e.g. תפו"א -> תפו'א or ק"ג -> ק'ג)
     let fixed = jsonStr.replace(/([\u0590-\u05FF])"([\u0590-\u05FF])/g, "$1'$2");
     fixed = fixed.replace(/([\u0590-\u05FF])"(?!\s*[,:\]\}])/g, "$1'$2");
     fixed = fixed.replace(/(?<![:\[,]\s*)"([\u0590-\u05FF])/g, "'$1");
@@ -65,7 +63,6 @@ export function robustJsonParse<T = any>(jsonStr: string): T {
     try {
       return JSON.parse(fixed);
     } catch (e2) {
-      // Attempt 2: Regex extraction fallback for recipe schema
       const extractArray = (key: string): string[] => {
         const match = jsonStr.match(new RegExp(`"${key}"\\s*:\\s*\\[([\\s\\S]*?)\\]`));
         if (!match) return [];
@@ -87,6 +84,11 @@ export function robustJsonParse<T = any>(jsonStr: string): T {
         return match ? match[1] : '';
       };
 
+      const extractNumber = (key: string): number | undefined => {
+        const match = jsonStr.match(new RegExp(`"${key}"\\s*:\\s*([0-9]+(?:\\.[0-9]+)?)`));
+        return match ? parseFloat(match[1]) : undefined;
+      };
+
       return {
         title: extractString('title'),
         description: extractString('description'),
@@ -97,6 +99,11 @@ export function robustJsonParse<T = any>(jsonStr: string): T {
         instructions: extractArray('instructions'),
         notes: extractString('notes'),
         suggestedCategory: extractString('suggestedCategory'),
+        caloriesPerServing: extractNumber('caloriesPerServing'),
+        proteinGrams: extractNumber('proteinGrams'),
+        carbsGrams: extractNumber('carbsGrams'),
+        fatGrams: extractNumber('fatGrams'),
+        fiberGrams: extractNumber('fiberGrams'),
       } as unknown as T;
     }
   }
@@ -107,7 +114,6 @@ async function generateWithFallback(
   primaryModel: string,
   generateParams: { contents: any; config?: any }
 ) {
-  // If primaryModel is 3.1-pro without quota, ensure we have flash fallbacks
   const modelsToTry = [
     primaryModel,
     ...FALLBACK_MODELS.filter((m) => m !== primaryModel),
@@ -115,7 +121,6 @@ async function generateWithFallback(
   let lastError: any = null;
 
   for (const model of modelsToTry) {
-    // Allow up to 2 retries on rate limits (429) per model
     for (let attempt = 0; attempt < 3; attempt++) {
       try {
         const response = await ai.models.generateContent({
@@ -133,7 +138,6 @@ async function generateWithFallback(
           errStr.includes('Quota exceeded') ||
           errStr.includes('rate-limits');
 
-        // If rate limited, wait and retry on this model before giving up
         if (isRateLimit && attempt < 2) {
           const waitTime = (attempt + 1) * 3500;
           console.warn(`[Gemini API] Rate limit (429) on ${model}, waiting ${waitTime / 1000}s before retry (attempt ${attempt + 1}/2)...`);
@@ -153,7 +157,7 @@ async function generateWithFallback(
 
         if (isRetryableError) {
           console.warn(`[Gemini API] Model ${model} failed, switching to next fallback model...`);
-          break; // break to next model in modelsToTry
+          break;
         }
         throw err;
       }
@@ -172,10 +176,11 @@ export async function parseRecipeWithGemini(
   const model = modelOverride || (await getActiveGeminiModel());
 
   const prompt = `
-אתה שף מומחה ועוזר דיגיטלי לספר מתכונים בעברית.
+אתה שף מומחה ותזונאי דיגיטלי לספר מתכונים בעברית.
 קיבלת תוכן גולמי של מסמך/קובץ מתכון (שם קובץ מקורי: ${fileName || 'לא צוין'}).
 
-עליך לחלץ את פרטי המתכון ולספק אך ורק אובייקט JSON תקין (ללא markdown, ללא \`\`\`json) עם השדות הבאים:
+עליך לחלץ את פרטי המתכון ולהעריך את הערכים התזונתיים למנה אחת (לסועד בודד).
+החזר אך ורק אובייקט JSON תקין (ללא markdown, ללא \`\`\`json) עם השדות הבאים:
 {
   "title": "שם המתכון בעברית (ברור וקצר)",
   "description": "תיאור קצר של המתכון או פתיח (אם קיים, אחרת null)",
@@ -183,20 +188,24 @@ export async function parseRecipeWithGemini(
   "prepTime": "זמן הכנה (למשל: '20 דקות')",
   "cookTime": "זמן בישול/אפייה (למשל: '45 דקות')",
   "ingredients": [
-    "רשימת מצרכים כמערך של מחרוזות בעברית עם כמויות ומידות מדויקות",
-    "לדוגמה: 2 כוסות קמח לבן",
-    "1 כפית אבקת אפייה"
+    "רשימת מצרכים כמערך של מחרוזות בעברית עם כמויות ומידות מדויקות"
   ],
   "instructions": [
-    "שלבי ההכנה כמערך של מחרוזות בעברית בסדר כרונולוגי ברור",
-    "שלב 1: לחמם תנור ל-180 מעלות",
-    "שלב 2: בקערה לערבב את החומרים היבשים"
+    "שלבי ההכנה כמערך של מחרוזות בעברית בסדר כרונולוגי ברור"
   ],
   "notes": "הערות השף, טיפים לשדרוג או תחליפים (אם קיימים)",
-  "suggestedCategory": "הצעת קטגוריה מתאימה בעברית מילה אחת או שתיים (למשל: 'איטלקי', 'אסייתי', 'עוגות וקינוחים', 'עיקריות', 'מרקים', 'סלטים', 'מאפים')"
+  "suggestedCategory": "הצעת קטגוריה מתאימה בעברית מילה אחת או שתיים (למשל: 'איטלקי', 'אסייתי', 'עוגות וקינוחים', 'עיקריות', 'מרקים', 'סלטים', 'מאפים')",
+  "caloriesPerServing": 450,
+  "proteinGrams": 32,
+  "carbsGrams": 24,
+  "fatGrams": 16,
+  "fiberGrams": 4
 }
 
-חשוב מאוד: אם יש במצרכים או בהוראות גרשיים עבריים או קיצורים (כמו תפו"א, ק"ג, ס"מ), השתמש בגרש בודד (') כדי לשמור על תקינות מחרוזות ה-JSON!
+חשוב מאוד:
+1. אם יש במצרכים או בהוראות גרשיים עבריים או קיצורים (כמו תפו"א, ק"ג, ס"מ), השתמש בגרש בודד (') כדי לשמור על תקינות מחרוזות ה-JSON!
+2. הערכים התזונתיים (caloriesPerServing, proteinGrams, carbsGrams, fatGrams, fiberGrams) חייבים להיות מספרים בלבד המייצגים את הערך למנה אחת (סועד בודד).
+3. אם כמות המנות לא צוינה, חשב לפי 4 מנות בסיס.
 
 הנה תוכן המסמך:
 ---
@@ -226,10 +235,78 @@ ${rawText}
       instructions: Array.isArray(parsed.instructions) ? parsed.instructions : [],
       notes: parsed.notes || '',
       suggestedCategory: parsed.suggestedCategory || '',
+      caloriesPerServing: typeof parsed.caloriesPerServing === 'number' ? Math.round(parsed.caloriesPerServing) : null,
+      proteinGrams: typeof parsed.proteinGrams === 'number' ? Math.round(parsed.proteinGrams * 10) / 10 : null,
+      carbsGrams: typeof parsed.carbsGrams === 'number' ? Math.round(parsed.carbsGrams * 10) / 10 : null,
+      fatGrams: typeof parsed.fatGrams === 'number' ? Math.round(parsed.fatGrams * 10) / 10 : null,
+      fiberGrams: typeof parsed.fiberGrams === 'number' ? Math.round(parsed.fiberGrams * 10) / 10 : null,
     };
   } catch (error: any) {
     console.error('Gemini parsing error:', error);
     throw new Error(`Failed to parse recipe with AI: ${error.message || error}`);
+  }
+}
+
+/**
+ * Dedicated nutrition estimator for existing recipes.
+ */
+export async function estimateRecipeNutrition(
+  title: string,
+  ingredients: string[],
+  servings?: string | null,
+  modelOverride?: string
+): Promise<{
+  caloriesPerServing: number;
+  proteinGrams: number;
+  carbsGrams: number;
+  fatGrams: number;
+  fiberGrams: number;
+}> {
+  const ai = getGeminiClient();
+  const model = modelOverride || (await getActiveGeminiModel());
+
+  const prompt = `
+אתה תזונאי קליני ושף מומחה.
+הערך את הערכים התזונתיים הממוצעים למנה אחת (סועד בודד) עבור המתכון הבא:
+
+שם המתכון: ${title}
+כמות מנות: ${servings || 'לא צוין (הנח 4 מנות)'}
+
+מצרכים:
+${ingredients.map((i, idx) => `${idx + 1}. ${i}`).join('\n')}
+
+החזר אך ורק אובייקט JSON תקין (ללא markdown) במבנה הבא עם מספרים שלמים או עשרוניים בלבד:
+{
+  "caloriesPerServing": 450,
+  "proteinGrams": 32,
+  "carbsGrams": 24,
+  "fatGrams": 16,
+  "fiberGrams": 4
+}
+`;
+
+  try {
+    const response = await generateWithFallback(ai, model, {
+      contents: prompt,
+      config: {
+        responseMimeType: 'application/json',
+      },
+    });
+
+    const text = response.text || '';
+    const cleaned = text.replace(/```json/g, '').replace(/```/g, '').trim();
+    const parsed = robustJsonParse<any>(cleaned);
+
+    return {
+      caloriesPerServing: typeof parsed.caloriesPerServing === 'number' ? Math.round(parsed.caloriesPerServing) : 0,
+      proteinGrams: typeof parsed.proteinGrams === 'number' ? Math.round(parsed.proteinGrams * 10) / 10 : 0,
+      carbsGrams: typeof parsed.carbsGrams === 'number' ? Math.round(parsed.carbsGrams * 10) / 10 : 0,
+      fatGrams: typeof parsed.fatGrams === 'number' ? Math.round(parsed.fatGrams * 10) / 10 : 0,
+      fiberGrams: typeof parsed.fiberGrams === 'number' ? Math.round(parsed.fiberGrams * 10) / 10 : 0,
+    };
+  } catch (error: any) {
+    console.error('Nutrition estimation error:', error);
+    throw new Error(`Failed to estimate nutrition: ${error.message || error}`);
   }
 }
 

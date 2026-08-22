@@ -20,6 +20,11 @@ export interface Recipe {
   notes?: string | null;
   sourceFile?: string | null;
   rawContent?: string | null;
+  caloriesPerServing?: number | null;
+  proteinGrams?: number | null;
+  carbsGrams?: number | null;
+  fatGrams?: number | null;
+  fiberGrams?: number | null;
   createdAt: string;
   updatedAt: string;
   categories?: {
@@ -38,8 +43,28 @@ export interface ParsedRecipe {
   notes?: string;
   suggestedCategory?: string;
   rawContent?: string;
+  caloriesPerServing?: number | null;
+  proteinGrams?: number | null;
+  carbsGrams?: number | null;
+  fatGrams?: number | null;
+  fiberGrams?: number | null;
 }
+
+export interface NutritionSettings {
+  highProteinMin: number; // e.g. 25 grams
+  lowCalorieMax: number;  // e.g. 400 calories
+  lowCarbMax: number;     // e.g. 15 grams
+  highFiberMin: number;   // e.g. 6 grams
+}
+
+export const DEFAULT_NUTRITION_SETTINGS: NutritionSettings = {
+  highProteinMin: 25,
+  lowCalorieMax: 400,
+  lowCarbMax: 15,
+  highFiberMin: 6,
+};
 
 export interface AppSettings {
   geminiModel: string;
+  nutritionSettings?: NutritionSettings;
 }

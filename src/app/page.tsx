@@ -1,31 +1,28 @@
 'use client';
 
-import React, { useState, useEffect, useCallback } from 'react';
-import {
-  Header,
-} from '@/components/Header';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import { Header } from '@/components/Header';
 import { CategoryFilterBar } from '@/components/CategoryFilterBar';
 import { RecipeCard } from '@/components/RecipeCard';
 import { RecipeDetailModal } from '@/components/RecipeDetailModal';
 import { RecipeFormModal } from '@/components/RecipeFormModal';
 import { DropZoneModal } from '@/components/DropZoneModal';
 import { CategoryManagerModal } from '@/components/CategoryManagerModal';
-import { AIChatDrawer } from '@/components/AIChatDrawer';
 import { SettingsModal } from '@/components/SettingsModal';
+import { AIChatDrawer } from '@/components/AIChatDrawer';
 import { BookOpeningIntro } from '@/components/BookOpeningIntro';
-import { Recipe, Category } from '@/types';
 import {
+  ChefHat,
+  Sparkles,
   Plus,
   UploadCloud,
-  Sparkles,
-  BookOpen,
-  Search,
-  ChefHat,
-  RefreshCw,
   X,
-  Cpu,
-  ArrowRight,
+  Search,
+  RefreshCw,
+  Salad,
 } from 'lucide-react';
+import { Recipe, Category, NutritionSettings, DEFAULT_NUTRITION_SETTINGS } from '@/types';
+import { filterRecipesByNutrition } from '@/lib/nutrition';
 
 export default function Home() {
   const [recipes, setRecipes] = useState<Recipe[]>([]);
@@ -35,6 +32,10 @@ export default function Home() {
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [loading, setLoading] = useState(true);
   const [showBookIntro, setShowBookIntro] = useState(true);
+
+  // Nutrition filtering and settings
+  const [nutritionFilter, setNutritionFilter] = useState<string | null>(null);
+  const [nutritionSettings, setNutritionSettings] = useState<NutritionSettings>(DEFAULT_NUTRITION_SETTINGS);
 
   // AI Search State
   const [selectedAIModel, setSelectedAIModel] = useState<string>('gemini-3.7-flash');
@@ -55,6 +56,20 @@ export default function Home() {
   const [viewingRecipe, setViewingRecipe] = useState<Recipe | null>(null);
   const [editingRecipe, setEditingRecipe] = useState<Recipe | null>(null);
   const [aiInitialPrompt, setAiInitialPrompt] = useState<string>('');
+
+  const fetchSettings = useCallback(async () => {
+    try {
+      const res = await fetch('/api/settings');
+      if (res.ok) {
+        const data = await res.json();
+        if (data.nutritionSettings) {
+          setNutritionSettings(data.nutritionSettings);
+        }
+      }
+    } catch (err) {
+      console.error('Error loading settings:', err);
+    }
+  }, []);
 
   const fetchCategories = useCallback(async () => {
     try {
@@ -110,9 +125,10 @@ export default function Home() {
   }, [searchQuery, selectedCategory, isAISearchActive]);
 
   useEffect(() => {
+    fetchSettings();
     fetchCategories();
     fetchTotalCount();
-  }, [fetchCategories, fetchTotalCount]);
+  }, [fetchSettings, fetchCategories, fetchTotalCount]);
 
   useEffect(() => {
     if (!isAISearchActive) {
@@ -179,28 +195,15 @@ export default function Home() {
   };
 
   const handleRefreshAll = () => {
-    setIsAISearchActive(false);
-    setAiSearchExplanation('');
-    setAiFallbackTriggered(false);
-    setAiRequestedModel('');
+    fetchRecipes();
     fetchCategories();
     fetchTotalCount();
-    fetchRecipes();
   };
 
-  const handleDeleteRecipe = async (id: string) => {
-    try {
-      const res = await fetch(`/api/recipes/${id}`, {
-        method: 'DELETE',
-      });
-      if (res.ok) {
-        if (viewingRecipe?.id === id) {
-          setViewingRecipe(null);
-        }
-        handleRefreshAll();
-      }
-    } catch (err) {
-      console.error('Error deleting recipe:', err);
+  const handleRecipeUpdatedLocally = (updated: Recipe) => {
+    setRecipes((prev) => prev.map((r) => (r.id === updated.id ? updated : r)));
+    if (viewingRecipe?.id === updated.id) {
+      setViewingRecipe(updated);
     }
   };
 
@@ -209,15 +212,64 @@ export default function Home() {
     setEditingRecipe(recipe);
   };
 
+  const handleDeleteRecipe = async (id: string) => {
+    try {
+      const res = await fetch(`/api/recipes/${id}`, {
+        method: 'DELETE',
+      });
+      if (res.ok) {
+        handleRefreshAll();
+      }
+    } catch (err) {
+      console.error('Error deleting recipe:', err);
+    }
+  };
+
   const handleAskAIAboutRecipe = (recipe: Recipe) => {
     setViewingRecipe(null);
-    setAiInitialPrompt(`הנה המתכון "${recipe.title}". איך אפשר לשדרג אותו או להכין גרסה מיוחדת שלו?`);
+    setAiInitialPrompt(
+      `אני מתעניין במתכון "${recipe.title}". האם תוכל להציע שדרוגים, התאמות או תוספות שילכו טוב איתו?`
+    );
     setIsAIChatOpen(true);
   };
 
+  // Nutrition counts for current recipes set
+  const nutritionCounts = useMemo(() => {
+    let highProtein = 0;
+    let lowCalorie = 0;
+    let lowCarb = 0;
+
+    for (const r of recipes) {
+      if (typeof r.proteinGrams === 'number' && r.proteinGrams >= nutritionSettings.highProteinMin) {
+        highProtein++;
+      }
+      if (
+        typeof r.caloriesPerServing === 'number' &&
+        r.caloriesPerServing > 0 &&
+        r.caloriesPerServing <= nutritionSettings.lowCalorieMax
+      ) {
+        lowCalorie++;
+      }
+      if (
+        typeof r.carbsGrams === 'number' &&
+        r.carbsGrams >= 0 &&
+        r.carbsGrams <= nutritionSettings.lowCarbMax
+      ) {
+        lowCarb++;
+      }
+    }
+    return { highProtein, lowCalorie, lowCarb };
+  }, [recipes, nutritionSettings]);
+
+  // Apply nutrition filter to displayed recipes
+  const displayedRecipes = useMemo(() => {
+    if (!nutritionFilter) return recipes;
+    return filterRecipesByNutrition(recipes, nutritionFilter, nutritionSettings);
+  }, [recipes, nutritionFilter, nutritionSettings]);
+
   return (
-    <div className="min-h-screen bg-slate-50 flex flex-col">
-      {/* 3D Antique Book Opening Intro */}
+    <div className="min-h-screen bg-slate-50 flex flex-col font-sans">
+      {/* 3D Realistic Antique Book Opening Animation Intro */}
       {showBookIntro && (
         <BookOpeningIntro onComplete={() => setShowBookIntro(false)} />
       )}
@@ -240,8 +292,8 @@ export default function Home() {
       />
 
       {/* Main Content Area */}
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 flex-1 w-full space-y-6">
-        {/* Category & Search Filter Bar with AI Search and Model Selection */}
+      <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-6">
+        {/* Category & Search Filter Bar */}
         <CategoryFilterBar
           categories={categories}
           selectedCategory={selectedCategory}
@@ -264,6 +316,15 @@ export default function Home() {
           onClearAISearch={handleClearAISearch}
           selectedAIModel={selectedAIModel}
           onSelectAIModel={setSelectedAIModel}
+          nutritionFilter={nutritionFilter}
+          onSelectNutritionFilter={(nFilter) => {
+            setNutritionFilter(nFilter);
+            if (nFilter && selectedCategory !== 'all') {
+              setSelectedCategory('all');
+            }
+          }}
+          nutritionSettings={nutritionSettings}
+          nutritionCounts={nutritionCounts}
         />
 
         {/* Active AI Search Banner */}
@@ -279,7 +340,7 @@ export default function Home() {
                     תוצאות חיפוש AI חכם עבור: "{aiSearchQuery}"
                   </span>
                   <span className="text-xs px-2 py-0.5 bg-purple-200/80 text-purple-900 rounded-full font-medium">
-                    {recipes.length} מתכונים מתאימים
+                    {displayedRecipes.length} מתכונים מתאימים
                   </span>
                   {aiModelUsed && (
                     <span className="text-[11px] px-2 py-0.5 bg-white border border-purple-200 text-purple-700 rounded-lg font-mono flex items-center gap-1">
@@ -310,6 +371,34 @@ export default function Home() {
           </div>
         )}
 
+        {/* Active Nutrition Filter Indicator */}
+        {nutritionFilter && (
+          <div className="p-3 bg-emerald-50/70 border border-emerald-200 rounded-2xl flex items-center justify-between gap-3 text-xs text-emerald-950 animate-in fade-in duration-150">
+            <div className="flex items-center gap-2">
+              <Salad className="w-4 h-4 text-emerald-600" />
+              <span>
+                מציג רק מתכונים בקטגוריה:{' '}
+                <strong>
+                  {nutritionFilter === 'high-protein'
+                    ? `עשיר בחלבון 💪 (לפחות ${nutritionSettings.highProteinMin}g)`
+                    : nutritionFilter === 'low-calorie'
+                    ? `דל קלוריות 🥗 (עד ${nutritionSettings.lowCalorieMax} קק״ל)`
+                    : `דל פחמימות 🥑 (עד ${nutritionSettings.lowCarbMax}g)`}
+                </strong>{' '}
+                ({displayedRecipes.length} מתכונים)
+              </span>
+            </div>
+
+            <button
+              onClick={() => setNutritionFilter(null)}
+              className="px-2.5 py-1 bg-white hover:bg-emerald-100 text-emerald-800 font-bold rounded-lg border border-emerald-300 transition flex items-center gap-1 shrink-0"
+            >
+              <X className="w-3 h-3" />
+              <span>בטל סינון תזונתי</span>
+            </button>
+          </div>
+        )}
+
         {/* Recipe Grid / Empty States */}
         {loading ? (
           <div className="py-20 text-center space-y-3">
@@ -318,8 +407,8 @@ export default function Home() {
               {isAISearching ? 'Gemini מנתח את כל המתכונים שלך...' : 'טוען את ספר המתכונים...'}
             </p>
           </div>
-        ) : recipes.length === 0 ? (
-          searchQuery || selectedCategory !== 'all' || isAISearchActive ? (
+        ) : displayedRecipes.length === 0 ? (
+          searchQuery || selectedCategory !== 'all' || nutritionFilter || isAISearchActive ? (
             /* No search results */
             <div className="bg-white rounded-2xl border border-slate-200 p-10 text-center max-w-lg mx-auto space-y-4 shadow-sm">
               <div className="w-14 h-14 rounded-2xl bg-amber-50 text-amber-600 flex items-center justify-center mx-auto">
@@ -329,11 +418,13 @@ export default function Home() {
                 <h3 className="text-lg font-bold text-slate-900">
                   {isAISearchActive
                     ? 'לא נמצאו מתכונים שתואמים לבקשה זו'
-                    : 'לא נמצאו מתכונים בחיפוש הרגיל'}
+                    : 'לא נמצאו מתכונים בסינון זה'}
                 </h3>
                 <p className="text-xs text-slate-500 mt-1 leading-relaxed">
                   {isAISearchActive
                     ? 'נסה לנסח את השאילתה במילים אחרות או לחזור לחיפוש הרגיל'
+                    : nutritionFilter
+                    ? 'אין מתכונים העומדים בקריטריונים אלו. תוכל לשנות את ערכי הסף בהגדרות או לחשב ערכים למתכונים נוספים.'
                     : 'רוצה לנסות לחפש בעזרת בינה מלאכותית שתבין את ההקשר והמצרכים?'}
                 </p>
               </div>
@@ -353,6 +444,7 @@ export default function Home() {
                   onClick={() => {
                     setSearchQuery('');
                     setSelectedCategory('all');
+                    setNutritionFilter(null);
                     if (isAISearchActive) handleClearAISearch();
                   }}
                   className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-medium text-xs rounded-xl transition"
@@ -372,7 +464,7 @@ export default function Home() {
                 <h2 className="text-2xl font-bold text-slate-900">ספר המתכונים שלך עדיין ריק</h2>
                 <p className="text-sm text-slate-500 max-w-md mx-auto leading-relaxed">
                   התחל להוסיף את המתכונים שלך על ידי גרירת קבצי Word, PDF, או הזנה ידנית.
-                  Gemini יחלץ עבורך אוטומטית את כל המצרכים והשלבים!
+                  Gemini יחלץ עבורך אוטומטית את כל המצרכים, השלבים והערכים התזונתיים!
                 </p>
               </div>
 
@@ -401,11 +493,16 @@ export default function Home() {
         ) : (
           /* Recipe Cards Grid */
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 sm:gap-5">
-            {recipes.map((recipe) => (
+            {displayedRecipes.map((recipe) => (
               <RecipeCard
                 key={recipe.id}
                 recipe={recipe}
                 onOpenDetail={(r) => setViewingRecipe(r)}
+                nutritionSettings={nutritionSettings}
+                onSelectNutritionFilter={(nFilter) => {
+                  setNutritionFilter(nFilter);
+                  setSelectedCategory('all');
+                }}
               />
             ))}
           </div>
@@ -420,6 +517,8 @@ export default function Home() {
         onEdit={handleEditRecipe}
         onDelete={handleDeleteRecipe}
         onAskAIAboutRecipe={handleAskAIAboutRecipe}
+        onRecipeUpdated={handleRecipeUpdatedLocally}
+        nutritionSettings={nutritionSettings}
       />
 
       {/* Add / Edit Form Modal */}
@@ -454,6 +553,12 @@ export default function Home() {
       <SettingsModal
         isOpen={isSettingsOpen}
         onClose={() => setIsSettingsOpen(false)}
+        onSettingsSaved={(newSettings) => {
+          setNutritionSettings(newSettings);
+        }}
+        onBatchNutritionComplete={() => {
+          handleRefreshAll();
+        }}
       />
 
       {/* AI Chat Drawer */}

@@ -1,18 +1,30 @@
 'use client';
 
 import React from 'react';
-import { Clock, Users, Utensils, FileText, ChevronLeft, Flame } from 'lucide-react';
-import { Recipe } from '@/types';
+import { Clock, Users, Utensils, FileText, ChevronLeft, Flame, Info } from 'lucide-react';
+import { Recipe, NutritionSettings, DEFAULT_NUTRITION_SETTINGS } from '@/types';
+import { getNutritionBadges } from '@/lib/nutrition';
 
 interface RecipeCardProps {
   recipe: Recipe;
   onOpenDetail: (recipe: Recipe) => void;
+  nutritionSettings?: NutritionSettings;
+  onSelectNutritionFilter?: (filterId: string) => void;
 }
 
-export const RecipeCard: React.FC<RecipeCardProps> = ({ recipe, onOpenDetail }) => {
+export const RecipeCard: React.FC<RecipeCardProps> = ({
+  recipe,
+  onOpenDetail,
+  nutritionSettings = DEFAULT_NUTRITION_SETTINGS,
+  onSelectNutritionFilter,
+}) => {
   const categories = recipe.categories?.map((c) => c.category) || [];
   const ingredientsCount = recipe.ingredients?.length || 0;
   const instructionsCount = recipe.instructions?.length || 0;
+  const nutritionBadges = getNutritionBadges(recipe, nutritionSettings);
+
+  const hasNutritionData =
+    typeof recipe.caloriesPerServing === 'number' || typeof recipe.proteinGrams === 'number';
 
   return (
     <div
@@ -51,9 +63,32 @@ export const RecipeCard: React.FC<RecipeCardProps> = ({ recipe, onOpenDetail }) 
         </div>
 
         {/* Title */}
-        <h3 className="text-lg font-bold text-slate-900 group-hover:text-amber-700 transition line-clamp-2 mb-2 leading-snug">
+        <h3 className="text-lg font-bold text-slate-900 group-hover:text-amber-700 transition line-clamp-2 mb-1.5 leading-snug">
           {recipe.title}
         </h3>
+
+        {/* Nutrition Badges Pills (Interactive with Hover Tooltips) */}
+        {nutritionBadges.length > 0 && (
+          <div className="flex flex-wrap items-center gap-1.5 mb-2.5">
+            {nutritionBadges.map((badge) => (
+              <span
+                key={badge.id}
+                title={badge.description}
+                onClick={(e) => {
+                  if (onSelectNutritionFilter) {
+                    e.stopPropagation();
+                    onSelectNutritionFilter(badge.id);
+                  }
+                }}
+                className={`group/badge relative inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-bold border transition ${badge.bgClass} ${badge.colorClass} ${badge.borderClass} hover:scale-105`}
+              >
+                <span>{badge.emoji}</span>
+                <span>{badge.label}</span>
+                <span className="opacity-75 text-[10px]">({badge.valueText})</span>
+              </span>
+            ))}
+          </div>
+        )}
 
         {/* Description / Notes preview */}
         {recipe.description && (
@@ -79,6 +114,13 @@ export const RecipeCard: React.FC<RecipeCardProps> = ({ recipe, onOpenDetail }) 
             <div className="flex items-center gap-1">
               <Users className="w-3.5 h-3.5 text-slate-400" />
               <span>{recipe.servings}</span>
+            </div>
+          )}
+
+          {hasNutritionData && typeof recipe.caloriesPerServing === 'number' && (
+            <div className="flex items-center gap-1 text-slate-600 font-medium mr-auto">
+              <span>🔥</span>
+              <span>{Math.round(recipe.caloriesPerServing)} קק״ל</span>
             </div>
           )}
         </div>

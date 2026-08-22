@@ -69,6 +69,11 @@ export async function PUT(
       notes,
       sourceFile,
       rawContent,
+      caloriesPerServing,
+      proteinGrams,
+      carbsGrams,
+      fatGrams,
+      fiberGrams,
       categoryIds,
     } = body;
 
@@ -107,6 +112,11 @@ export async function PUT(
         notes: notes !== undefined ? notes?.trim() || null : undefined,
         sourceFile: sourceFile !== undefined ? sourceFile?.trim() || null : undefined,
         rawContent: rawContent !== undefined ? rawContent : undefined,
+        caloriesPerServing: caloriesPerServing !== undefined ? (typeof caloriesPerServing === 'number' ? caloriesPerServing : null) : undefined,
+        proteinGrams: proteinGrams !== undefined ? (typeof proteinGrams === 'number' ? proteinGrams : null) : undefined,
+        carbsGrams: carbsGrams !== undefined ? (typeof carbsGrams === 'number' ? carbsGrams : null) : undefined,
+        fatGrams: fatGrams !== undefined ? (typeof fatGrams === 'number' ? fatGrams : null) : undefined,
+        fiberGrams: fiberGrams !== undefined ? (typeof fiberGrams === 'number' ? fiberGrams : null) : undefined,
         categories: Array.isArray(categoryIds) && categoryIds.length > 0
           ? {
               create: categoryIds.map((catId: string) => ({

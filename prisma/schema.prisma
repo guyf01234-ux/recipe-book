@@ -12,20 +12,25 @@ datasource db {
 }
 
 model Recipe {
-  id           String           @id @default(cuid())
-  title        String
-  description  String?
-  servings     String?
-  prepTime     String?
-  cookTime     String?
-  ingredients  String           // JSON stringified array of string
-  instructions String           // JSON stringified array of string
-  notes        String?
-  sourceFile   String?
-  rawContent   String?          // Original unedited plain text from uploaded file
-  createdAt    DateTime         @default(now())
-  updatedAt    DateTime         @updatedAt
-  categories   RecipeCategory[]
+  id                 String           @id @default(cuid())
+  title              String
+  description        String?
+  servings           String?
+  prepTime           String?
+  cookTime           String?
+  ingredients        String           // JSON stringified array of string
+  instructions       String           // JSON stringified array of string
+  notes              String?
+  sourceFile         String?
+  rawContent         String?          // Original unedited plain text from uploaded file
+  caloriesPerServing Float?
+  proteinGrams       Float?
+  carbsGrams         Float?
+  fatGrams           Float?
+  fiberGrams         Float?
+  createdAt          DateTime         @default(now())
+  updatedAt          DateTime         @updatedAt
+  categories         RecipeCategory[]
 }
 
 model Category {

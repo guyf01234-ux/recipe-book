@@ -21,9 +21,12 @@ import {
   RotateCcw,
   Plus,
   Minus,
+  Loader2,
+  Info,
 } from 'lucide-react';
-import { Recipe } from '@/types';
+import { Recipe, NutritionSettings, DEFAULT_NUTRITION_SETTINGS } from '@/types';
 import { extractBaseServings, scaleIngredientsList } from '@/lib/recipeScaler';
+import { getNutritionBadges } from '@/lib/nutrition';
 
 interface RecipeDetailModalProps {
   recipe: Recipe | null;
@@ -32,6 +35,8 @@ interface RecipeDetailModalProps {
   onEdit: (recipe: Recipe) => void;
   onDelete: (id: string) => Promise<void>;
   onAskAIAboutRecipe?: (recipe: Recipe) => void;
+  onRecipeUpdated?: (updatedRecipe: Recipe) => void;
+  nutritionSettings?: NutritionSettings;
 }
 
 export const RecipeDetailModal: React.FC<RecipeDetailModalProps> = ({
@@ -41,32 +46,37 @@ export const RecipeDetailModal: React.FC<RecipeDetailModalProps> = ({
   onEdit,
   onDelete,
   onAskAIAboutRecipe,
+  onRecipeUpdated,
+  nutritionSettings = DEFAULT_NUTRITION_SETTINGS,
 }) => {
   const [activeTab, setActiveTab] = useState<'formatted' | 'raw'>('formatted');
   const [checkedIngredients, setCheckedIngredients] = useState<Record<number, boolean>>({});
   const [isDeleting, setIsDeleting] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [copiedRaw, setCopiedRaw] = useState(false);
+  const [isCalculatingNutrition, setIsCalculatingNutrition] = useState(false);
+  const [localRecipe, setLocalRecipe] = useState<Recipe | null>(recipe);
 
   // Dynamic Serving Scaler (Non-persistent local state)
-  const baseServings = recipe ? extractBaseServings(recipe.servings) : 4;
+  const baseServings = localRecipe ? extractBaseServings(localRecipe.servings) : 4;
   const [targetServings, setTargetServings] = useState<number>(baseServings);
 
   // Reset target servings whenever modal opens or recipe changes
   useEffect(() => {
     if (recipe) {
+      setLocalRecipe(recipe);
       setTargetServings(extractBaseServings(recipe.servings));
       setCheckedIngredients({});
     }
-  }, [recipe?.id, recipe?.servings]);
+  }, [recipe]);
 
-  if (!isOpen || !recipe) return null;
+  if (!isOpen || !localRecipe) return null;
 
   const isScaled = targetServings !== baseServings;
   const multiplier = targetServings / (baseServings || 4);
   const displayedIngredients = isScaled
-    ? scaleIngredientsList(recipe.ingredients, multiplier)
-    : recipe.ingredients;
+    ? scaleIngredientsList(localRecipe.ingredients, multiplier)
+    : localRecipe.ingredients;
 
   const handleDecreaseServings = () => {
     setTargetServings((prev) => Math.max(1, prev - 1));
@@ -90,7 +100,7 @@ export const RecipeDetailModal: React.FC<RecipeDetailModalProps> = ({
   const handleDelete = async () => {
     setIsDeleting(true);
     try {
-      await onDelete(recipe.id);
+      await onDelete(localRecipe.id);
       onClose();
     } finally {
       setIsDeleting(false);
@@ -103,14 +113,39 @@ export const RecipeDetailModal: React.FC<RecipeDetailModalProps> = ({
   };
 
   const handleCopyRaw = () => {
-    if (recipe.rawContent) {
-      navigator.clipboard.writeText(recipe.rawContent);
+    if (localRecipe.rawContent) {
+      navigator.clipboard.writeText(localRecipe.rawContent);
       setCopiedRaw(true);
       setTimeout(() => setCopiedRaw(false), 2000);
     }
   };
 
-  const categories = recipe.categories?.map((c) => c.category) || [];
+  const handleCalculateNutrition = async () => {
+    if (!localRecipe || isCalculatingNutrition) return;
+    setIsCalculatingNutrition(true);
+    try {
+      const res = await fetch(`/api/recipes/${localRecipe.id}/nutrition`, {
+        method: 'POST',
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to calculate nutrition');
+
+      setLocalRecipe(data.recipe);
+      if (onRecipeUpdated) {
+        onRecipeUpdated(data.recipe);
+      }
+    } catch (err: any) {
+      console.error('Error calculating nutrition:', err);
+      alert(err.message || 'שגיאה בחישוב הערכים התזונתיים');
+    } finally {
+      setIsCalculatingNutrition(false);
+    }
+  };
+
+  const categories = localRecipe.categories?.map((c) => c.category) || [];
+  const nutritionBadges = getNutritionBadges(localRecipe, nutritionSettings);
+  const hasNutritionData =
+    typeof localRecipe.caloriesPerServing === 'number' && localRecipe.caloriesPerServing > 0;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 modal-overlay">
@@ -119,7 +154,7 @@ export const RecipeDetailModal: React.FC<RecipeDetailModalProps> = ({
         <div className="px-6 py-3.5 border-b border-slate-100 flex items-center justify-between bg-slate-50/70">
           <div className="flex items-center gap-2">
             <button
-              onClick={() => onEdit(recipe)}
+              onClick={() => onEdit(localRecipe)}
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-medium text-slate-700 bg-white border border-slate-200 hover:bg-slate-50 transition"
             >
               <Edit className="w-3.5 h-3.5 text-slate-500" />
@@ -137,7 +172,7 @@ export const RecipeDetailModal: React.FC<RecipeDetailModalProps> = ({
 
             {onAskAIAboutRecipe && (
               <button
-                onClick={() => onAskAIAboutRecipe(recipe)}
+                onClick={() => onAskAIAboutRecipe(localRecipe)}
                 className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-medium text-purple-700 bg-purple-50 border border-purple-200 hover:bg-purple-100 transition"
               >
                 <Sparkles className="w-3.5 h-3.5 text-purple-600" />
@@ -167,7 +202,7 @@ export const RecipeDetailModal: React.FC<RecipeDetailModalProps> = ({
         {/* Delete Confirmation Banner */}
         {showDeleteConfirm && (
           <div className="bg-red-50 border-b border-red-200 p-4 flex items-center justify-between text-xs text-red-900">
-            <span>האם אתה בטוח שברצונך למחוק את המתכון "{recipe.title}"?</span>
+            <span>האם אתה בטוח שברצונך למחוק את המתכון "{localRecipe.title}"?</span>
             <div className="flex items-center gap-2">
               <button
                 onClick={handleDelete}
@@ -210,7 +245,7 @@ export const RecipeDetailModal: React.FC<RecipeDetailModalProps> = ({
           >
             <FileText className="w-4 h-4" />
             <span>טקסט מקורי מהקובץ</span>
-            {recipe.rawContent && (
+            {localRecipe.rawContent && (
               <span className="text-[10px] px-1.5 py-0.2 bg-slate-100 text-slate-600 rounded-md font-normal">
                 מדויק
               </span>
@@ -219,11 +254,11 @@ export const RecipeDetailModal: React.FC<RecipeDetailModalProps> = ({
         </div>
 
         {/* Content Body */}
-        <div className="p-6 overflow-y-auto space-y-6 flex-1">
+        <div className="p-6 overflow-y-auto space-y-5 flex-1">
           {activeTab === 'formatted' ? (
             /* TAB 1: FORMATTED STRUCTURED RECIPE */
             <>
-              {/* Title and metadata */}
+              {/* Title, Category Badges & Nutrition Badges */}
               <div>
                 <div className="flex flex-wrap items-center gap-2 mb-2">
                   {categories.length > 0 ? (
@@ -241,47 +276,60 @@ export const RecipeDetailModal: React.FC<RecipeDetailModalProps> = ({
                     </span>
                   )}
 
-                  {recipe.sourceFile && (
-                    <span className="flex items-center gap-1 text-xs text-slate-500 bg-slate-100 px-2.5 py-1 rounded-lg">
+                  {/* Nutrition Badges */}
+                  {nutritionBadges.map((badge) => (
+                    <span
+                      key={badge.id}
+                      title={badge.description}
+                      className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-bold border transition ${badge.bgClass} ${badge.colorClass} ${badge.borderClass}`}
+                    >
+                      <span>{badge.emoji}</span>
+                      <span>{badge.label}</span>
+                      <span className="opacity-75 text-[11px]">({badge.valueText})</span>
+                    </span>
+                  ))}
+
+                  {localRecipe.sourceFile && (
+                    <span className="flex items-center gap-1 text-xs text-slate-500 bg-slate-100 px-2.5 py-1 rounded-lg mr-auto">
                       <FileText className="w-3.5 h-3.5 text-slate-400" />
-                      קובץ מקור: {recipe.sourceFile}
+                      קובץ מקור: {localRecipe.sourceFile}
                     </span>
                   )}
                 </div>
 
                 <h1 className="text-2xl sm:text-3xl font-extrabold text-slate-900 mb-2">
-                  {recipe.title}
+                  {localRecipe.title}
                 </h1>
 
-                {recipe.description && (
+                {localRecipe.description && (
                   <p className="text-slate-600 text-sm sm:text-base leading-relaxed">
-                    {recipe.description}
+                    {localRecipe.description}
                   </p>
                 )}
               </div>
 
               {/* Quick info row with Dynamic Servings Stepper */}
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 p-4 bg-amber-50/50 rounded-2xl border border-amber-100 text-sm">
-                {recipe.prepTime && (
+                {localRecipe.prepTime && (
                   <div className="flex items-center gap-2.5">
                     <div className="w-8 h-8 rounded-xl bg-amber-100 text-amber-700 flex items-center justify-center shrink-0">
                       <Clock className="w-4 h-4" />
                     </div>
                     <div>
                       <div className="text-[11px] text-slate-500">זמן הכנה</div>
-                      <div className="font-semibold text-slate-800">{recipe.prepTime}</div>
+                      <div className="font-semibold text-slate-800">{localRecipe.prepTime}</div>
                     </div>
                   </div>
                 )}
 
-                {recipe.cookTime && (
+                {localRecipe.cookTime && (
                   <div className="flex items-center gap-2.5">
                     <div className="w-8 h-8 rounded-xl bg-orange-100 text-orange-700 flex items-center justify-center shrink-0">
                       <Flame className="w-4 h-4" />
                     </div>
                     <div>
                       <div className="text-[11px] text-slate-500">זמן בישול/אפייה</div>
-                      <div className="font-semibold text-slate-800">{recipe.cookTime}</div>
+                      <div className="font-semibold text-slate-800">{localRecipe.cookTime}</div>
                     </div>
                   </div>
                 )}
@@ -295,7 +343,7 @@ export const RecipeDetailModal: React.FC<RecipeDetailModalProps> = ({
                     <div className="min-w-0">
                       <div className="text-[11px] text-slate-500 truncate">סועדים / מנות</div>
                       <div className="font-semibold text-slate-900 text-xs truncate">
-                        {recipe.servings || `${baseServings} מנות`}
+                        {localRecipe.servings || `${baseServings} מנות`}
                       </div>
                     </div>
                   </div>
@@ -331,13 +379,89 @@ export const RecipeDetailModal: React.FC<RecipeDetailModalProps> = ({
                 </div>
               </div>
 
+              {/* Nutrition Macro Breakdown Bar */}
+              <div className="p-3.5 bg-gradient-to-r from-slate-50 to-slate-100/70 rounded-2xl border border-slate-200 text-xs">
+                <div className="flex items-center justify-between gap-2 mb-2.5">
+                  <div className="font-bold text-slate-800 flex items-center gap-1.5">
+                    <span>🥗</span>
+                    <span>ערכים תזונתיים משוערים למנה (סועד בודד)</span>
+                  </div>
+
+                  <button
+                    onClick={handleCalculateNutrition}
+                    disabled={isCalculatingNutrition}
+                    className="text-[11px] text-amber-700 hover:text-amber-900 bg-white hover:bg-amber-50 px-2 py-0.5 rounded-lg border border-amber-200 flex items-center gap-1 transition disabled:opacity-50"
+                  >
+                    {isCalculatingNutrition ? (
+                      <>
+                        <Loader2 className="w-3 h-3 animate-spin" />
+                        <span>מחשב ערכים...</span>
+                      </>
+                    ) : hasNutritionData ? (
+                      <>
+                        <RotateCcw className="w-3 h-3" />
+                        <span>חשב מחדש ב-AI</span>
+                      </>
+                    ) : (
+                      <>
+                        <Sparkles className="w-3 h-3 text-purple-600" />
+                        <span>חשב ערכים תזונתיים ✨</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+
+                {hasNutritionData ? (
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-center">
+                    <div className="bg-white p-2 rounded-xl border border-slate-200 shadow-xs">
+                      <div className="text-[11px] text-slate-500">קלוריות</div>
+                      <div className="text-sm font-extrabold text-amber-600">
+                        {Math.round(localRecipe.caloriesPerServing || 0)} <span className="text-[10px] font-normal text-slate-400">קק״ל</span>
+                      </div>
+                    </div>
+
+                    <div className="bg-white p-2 rounded-xl border border-slate-200 shadow-xs">
+                      <div className="text-[11px] text-slate-500">חלבון</div>
+                      <div className="text-sm font-extrabold text-emerald-600">
+                        {localRecipe.proteinGrams ?? 0} <span className="text-[10px] font-normal text-slate-400">גרם</span>
+                      </div>
+                    </div>
+
+                    <div className="bg-white p-2 rounded-xl border border-slate-200 shadow-xs">
+                      <div className="text-[11px] text-slate-500">פחמימות</div>
+                      <div className="text-sm font-extrabold text-indigo-600">
+                        {localRecipe.carbsGrams ?? 0} <span className="text-[10px] font-normal text-slate-400">גרם</span>
+                      </div>
+                    </div>
+
+                    <div className="bg-white p-2 rounded-xl border border-slate-200 shadow-xs">
+                      <div className="text-[11px] text-slate-500">שומנים</div>
+                      <div className="text-sm font-extrabold text-orange-600">
+                        {localRecipe.fatGrams ?? 0} <span className="text-[10px] font-normal text-slate-400">גרם</span>
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="text-center py-2 text-slate-500 text-xs flex items-center justify-center gap-2">
+                    <span>טרם חושבו ערכים תזונתיים עבור מתכון זה.</span>
+                    <button
+                      onClick={handleCalculateNutrition}
+                      disabled={isCalculatingNutrition}
+                      className="text-purple-700 underline font-bold"
+                    >
+                      לחץ לחישוב מיידי
+                    </button>
+                  </div>
+                )}
+              </div>
+
               {/* Revert to original quantities banner (Appears when scaled) */}
               {isScaled && (
                 <div className="p-3 bg-amber-100/70 border border-amber-300 rounded-2xl flex flex-col sm:flex-row items-center justify-between gap-2.5 animate-in fade-in slide-in-from-top-2 duration-200 shadow-xs">
                   <div className="flex items-center gap-2 text-xs text-amber-950 font-medium">
                     <Sparkles className="w-4 h-4 text-amber-600 shrink-0" />
                     <span>
-                      כמויות המצרכים מותאמות כעת ל-<strong>{targetServings} סועדים</strong> (במקור: {recipe.servings || `${baseServings} מנות`}).
+                      כמויות המצרכים מותאמות כעת ל-<strong>{targetServings} סועדים</strong> (במקור: {localRecipe.servings || `${baseServings} מנות`}).
                     </span>
                   </div>
 
@@ -404,12 +528,12 @@ export const RecipeDetailModal: React.FC<RecipeDetailModalProps> = ({
                   <div className="border-b border-slate-200 pb-2">
                     <h2 className="text-base font-bold text-slate-900 flex items-center gap-2">
                       <Flame className="w-4 h-4 text-amber-600" />
-                      אופן ההכנה ({recipe.instructions.length} שלבים)
+                      אופן ההכנה ({localRecipe.instructions.length} שלבים)
                     </h2>
                   </div>
 
                   <div className="space-y-3">
-                    {recipe.instructions.map((step, idx) => (
+                    {localRecipe.instructions.map((step, idx) => (
                       <div
                         key={idx}
                         className="flex items-start gap-3 p-3 rounded-2xl bg-slate-50 border border-slate-100"
@@ -425,14 +549,14 @@ export const RecipeDetailModal: React.FC<RecipeDetailModalProps> = ({
               </div>
 
               {/* Notes / Tips */}
-              {recipe.notes && (
+              {localRecipe.notes && (
                 <div className="p-4 bg-purple-50/60 border border-purple-100 rounded-2xl text-sm">
                   <div className="font-bold text-purple-900 flex items-center gap-1.5 mb-1.5">
                     <Sparkles className="w-4 h-4 text-purple-600" />
                     הערות וטיפים
                   </div>
                   <p className="text-purple-950 text-xs sm:text-sm leading-relaxed whitespace-pre-line">
-                    {recipe.notes}
+                    {localRecipe.notes}
                   </p>
                 </div>
               )}
@@ -451,7 +575,7 @@ export const RecipeDetailModal: React.FC<RecipeDetailModalProps> = ({
                   </div>
                 </div>
 
-                {recipe.rawContent && (
+                {localRecipe.rawContent && (
                   <button
                     onClick={handleCopyRaw}
                     className="px-3 py-1.5 bg-white hover:bg-amber-100 text-amber-900 rounded-xl font-medium border border-amber-300 transition flex items-center gap-1.5 shadow-sm"
@@ -472,7 +596,7 @@ export const RecipeDetailModal: React.FC<RecipeDetailModalProps> = ({
               </div>
 
               <div className="p-5 bg-slate-50 border border-slate-200 rounded-2xl font-mono text-xs leading-relaxed whitespace-pre-wrap text-slate-800 overflow-x-auto">
-                {recipe.rawContent || 'אין תוכן גולמי זמין עבור מתכון זה.'}
+                {localRecipe.rawContent || 'אין תוכן גולמי זמין עבור מתכון זה.'}
               </div>
             </div>
           )}

@@ -113,6 +113,11 @@ export async function POST(req: NextRequest) {
       notes,
       sourceFile,
       rawContent,
+      caloriesPerServing,
+      proteinGrams,
+      carbsGrams,
+      fatGrams,
+      fiberGrams,
       categoryIds,
     } = body;
 
@@ -143,6 +148,11 @@ export async function POST(req: NextRequest) {
         notes: notes?.trim() || null,
         sourceFile: sourceFile?.trim() || null,
         rawContent: rawContent !== undefined ? rawContent : null,
+        caloriesPerServing: typeof caloriesPerServing === 'number' ? caloriesPerServing : null,
+        proteinGrams: typeof proteinGrams === 'number' ? proteinGrams : null,
+        carbsGrams: typeof carbsGrams === 'number' ? carbsGrams : null,
+        fatGrams: typeof fatGrams === 'number' ? fatGrams : null,
+        fiberGrams: typeof fiberGrams === 'number' ? fiberGrams : null,
         categories: Array.isArray(categoryIds) && categoryIds.length > 0
           ? {
               create: categoryIds.map((catId: string) => ({
