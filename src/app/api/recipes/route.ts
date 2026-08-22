@@ -1,9 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { prisma } from '@/lib/prisma';
+import { prisma, ensureDatabaseSchema } from '@/lib/prisma';
 import { findMatchingCategoryIds } from '@/lib/hebrewSearch';
 
 export async function GET(req: NextRequest) {
   try {
+    await ensureDatabaseSchema();
     const { searchParams } = new URL(req.url);
     const search = searchParams.get('search')?.trim();
     const categoryId = searchParams.get('categoryId');
@@ -101,6 +102,7 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   try {
+    await ensureDatabaseSchema();
     const body = await req.json();
     const {
       title,

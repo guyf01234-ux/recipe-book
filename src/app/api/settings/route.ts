@@ -1,10 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { prisma } from '@/lib/prisma';
+import { prisma, ensureDatabaseSchema } from '@/lib/prisma';
 import { DEFAULT_MODEL, PRESET_MODELS } from '@/lib/gemini';
 import { DEFAULT_NUTRITION_SETTINGS, NutritionSettings } from '@/types';
 
 export async function GET() {
   try {
+    await ensureDatabaseSchema();
     const modelSetting = await prisma.appSetting.findUnique({
       where: { key: 'geminiModel' },
     });

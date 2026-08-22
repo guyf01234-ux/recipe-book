@@ -1,11 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { prisma } from '@/lib/prisma';
+import { prisma, ensureDatabaseSchema } from '@/lib/prisma';
 
 export async function GET(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    await ensureDatabaseSchema();
     const { id } = await params;
     const recipe = await prisma.recipe.findUnique({
       where: { id },
@@ -56,6 +57,7 @@ export async function PUT(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    await ensureDatabaseSchema();
     const { id } = await params;
     const body = await req.json();
     const {

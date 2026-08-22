@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { prisma } from '@/lib/prisma';
+import { prisma, ensureDatabaseSchema } from '@/lib/prisma';
 
 export async function GET() {
   try {
+    await ensureDatabaseSchema();
     const categories = await prisma.category.findMany({
       orderBy: { name: 'asc' },
       include: {
