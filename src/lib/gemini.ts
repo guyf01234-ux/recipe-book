@@ -5,18 +5,17 @@ import { ParsedRecipe } from '@/types';
 // Default model - current active Google models
 export const DEFAULT_MODEL = 'gemini-3.7-flash';
 
-// Fallback models in case of high demand (503/429) or retired models (404)
+// Fallback models with active free tier quotas
 export const FALLBACK_MODELS = [
   'gemini-3.7-flash',
   'gemini-3.5-flash-lite',
-  'gemini-3.1-pro-preview',
 ];
 
 // Available suggested models
 export const PRESET_MODELS = [
   { id: 'gemini-3.7-flash', name: 'Gemini 3.7 Flash (מומלץ - הדגם העדכני ביותר)', recommended: true },
-  { id: 'gemini-3.5-flash-lite', name: 'Gemini 3.5 Flash-Lite (סופר מהיר וחסכוני)' },
-  { id: 'gemini-3.1-pro-preview', name: 'Gemini 3.1 Pro (חשיבה עמוקה)' },
+  { id: 'gemini-3.5-flash-lite', name: 'Gemini 3.5 Flash-Lite (סופר מהיר וחסכוני - מומלץ לכמויות גדולות)' },
+  { id: 'gemini-3.1-pro-preview', name: 'Gemini 3.1 Pro (חשיבה עמוקה - דורש חשבון Pay-As-You-Go)' },
 ];
 
 export async function getActiveGeminiModel(): Promise<string> {
@@ -26,7 +25,7 @@ export async function getActiveGeminiModel(): Promise<string> {
     });
     if (setting?.value && setting.value.trim() !== '') {
       const val = setting.value.trim();
-      // If old deprecated 2.5 model is in database, upgrade to 3.7
+      // If old deprecated 2.5 or unusable 3.1-pro on free tier is set, fallback to 3.7
       if (val.includes('2.5') || val.includes('2.0') || val.includes('1.5')) {
         await prisma.appSetting.update({
           where: { key: 'geminiModel' },
@@ -50,12 +49,16 @@ export function getGeminiClient(): GoogleGenAI {
   return new GoogleGenAI({ apiKey });
 }
 
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 async function generateWithFallback(
   ai: GoogleGenAI,
   primaryModel: string,
   generateParams: { contents: any; config?: any }
 ) {
-  // Build list of models to try
+  // If primaryModel is 3.1-pro without quota, ensure we have flash fallbacks
   const modelsToTry = [
     primaryModel,
     ...FALLBACK_MODELS.filter((m) => m !== primaryModel),
@@ -63,29 +66,48 @@ async function generateWithFallback(
   let lastError: any = null;
 
   for (const model of modelsToTry) {
-    try {
-      const response = await ai.models.generateContent({
-        model: model,
-        ...generateParams,
-      });
-      return response;
-    } catch (err: any) {
-      lastError = err;
-      const isRetryableError =
-        err?.status === 503 ||
-        err?.status === 429 ||
-        err?.status === 404 ||
-        err?.message?.includes('high demand') ||
-        err?.message?.includes('no longer available') ||
-        err?.message?.includes('Resource has been exhausted') ||
-        err?.message?.includes('NOT_FOUND') ||
-        err?.message?.includes('UNAVAILABLE');
+    // Allow up to 2 retries on rate limits (429) per model
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        const response = await ai.models.generateContent({
+          model: model,
+          ...generateParams,
+        });
+        return response;
+      } catch (err: any) {
+        lastError = err;
+        const errStr = String(err?.message || '') + String(err?.status || '');
+        const isRateLimit =
+          err?.status === 429 ||
+          errStr.includes('429') ||
+          errStr.includes('RESOURCE_EXHAUSTED') ||
+          errStr.includes('Quota exceeded') ||
+          errStr.includes('rate-limits');
 
-      if (isRetryableError) {
-        console.warn(`Model ${model} failed (${err.message || err.status}), attempting fallback...`);
-        continue;
+        // If rate limited, wait and retry on this model before giving up
+        if (isRateLimit && attempt < 2) {
+          const waitTime = (attempt + 1) * 3500;
+          console.warn(`[Gemini API] Rate limit (429) on ${model}, waiting ${waitTime / 1000}s before retry (attempt ${attempt + 1}/2)...`);
+          await sleep(waitTime);
+          continue;
+        }
+
+        const isRetryableError =
+          isRateLimit ||
+          err?.status === 503 ||
+          err?.status === 404 ||
+          errStr.includes('503') ||
+          errStr.includes('high demand') ||
+          errStr.includes('no longer available') ||
+          errStr.includes('NOT_FOUND') ||
+          errStr.includes('UNAVAILABLE');
+
+        if (isRetryableError) {
+          console.warn(`[Gemini API] Model ${model} failed, switching to next fallback model...`);
+          break; // break to next model in modelsToTry
+        }
+        throw err;
       }
-      throw err;
     }
   }
 
@@ -139,30 +161,58 @@ ${rawText}
       },
     });
 
-    const responseText = response.text || '';
-    const cleaned = responseText.replace(/```json/g, '').replace(/```/g, '').trim();
+    const text = response.text || '';
+    const cleaned = text.replace(/```json/g, '').replace(/```/g, '').trim();
     const parsed = JSON.parse(cleaned) as ParsedRecipe;
 
     return {
-      title: parsed.title || fileName?.replace(/\.[^/.]+$/, '') || 'מתכון ללא שם',
-      description: parsed.description || undefined,
-      servings: parsed.servings || undefined,
-      prepTime: parsed.prepTime || undefined,
-      cookTime: parsed.cookTime || undefined,
+      title: parsed.title || '',
+      description: parsed.description || '',
+      servings: parsed.servings || '',
+      prepTime: parsed.prepTime || '',
+      cookTime: parsed.cookTime || '',
       ingredients: Array.isArray(parsed.ingredients) ? parsed.ingredients : [],
       instructions: Array.isArray(parsed.instructions) ? parsed.instructions : [],
-      notes: parsed.notes || undefined,
-      suggestedCategory: parsed.suggestedCategory || undefined,
+      notes: parsed.notes || '',
+      suggestedCategory: parsed.suggestedCategory || '',
     };
   } catch (error: any) {
     console.error('Gemini parsing error:', error);
-    throw new Error(`שגיאה בפענוח המתכון באמצעות ה-AI: ${error.message || error}`);
+    throw new Error(`Failed to parse recipe with AI: ${error.message || error}`);
+  }
+}
+
+export async function askGeminiChef(
+  question: string,
+  currentRecipeContext?: string,
+  modelOverride?: string
+): Promise<string> {
+  const ai = getGeminiClient();
+  const model = modelOverride || (await getActiveGeminiModel());
+
+  const prompt = `
+אתה שף מקצועי, חם, אוהב ומלא ידע בספר המתכונים המשפחתי "ספר המתכונים של שמוליק פייגנבוים".
+ענה תמיד בעברית טבעית, חמה, קולחת ומזמינה.
+${currentRecipeContext ? `הנה המתכון שהמשתמש צופה בו כרגע:\n${currentRecipeContext}\n` : ''}
+שאלה של המשתמש:
+${question}
+`;
+
+  try {
+    const response = await generateWithFallback(ai, model, {
+      contents: prompt,
+    });
+
+    return response.text || 'מצטער, לא הצלחתי לעבד את התשובה. אנא נסה שוב.';
+  } catch (error: any) {
+    console.error('Gemini Chef error:', error);
+    throw new Error(`שגיאה בתקשורת עם שף ה-AI: ${error.message || error}`);
   }
 }
 
 export async function chatWithRecipeAI(
-  userMessage: string,
-  history: { role: 'user' | 'model'; text: string }[] = [],
+  message: string,
+  history: Array<{ role: 'user' | 'model'; parts: Array<{ text: string }> }>,
   recipesSummary: string,
   useWebSearch: boolean = false,
   modelOverride?: string
@@ -171,41 +221,42 @@ export async function chatWithRecipeAI(
   const model = modelOverride || (await getActiveGeminiModel());
 
   const systemInstruction = `
-אתה שף ועוזר בישול אישי חכם ואדיב בעברית עבור אפליקציית "ספר המתכונים שלי".
-יש לך גישה לרשימת המתכונים השמורים של המשתמש.
-
-הנה רשימת המתכונים השמורים של המשתמש:
+אתה שף מומחה ועוזר קולי דיגיטלי לספר המתכונים המשפחתי "ספר המתכונים של שמוליק פייגנבוים".
+ענה תמיד בעברית בלבד.
+היה מסביר פנים, מקצועי, יצירתי, חם ונעים.
+הנה רשימת כל המתכונים הקיימים בספר המשפחתי כרגע:
 ---
-${recipesSummary || 'עדיין אין מתכונים שמורים באפליקציה.'}
+${recipesSummary}
 ---
-
-הנחיות:
-1. ענה תמיד בעברית טבעית, חמה ומקצועית, תוך שימוש בכיווניות מימין לשמאל.
-2. אם המשתמש שואל מה להכין לפי מצרכים שיש לו בבית, בדוק תחילה אילו מתכונים מהאוסף שלו מתאימים והצע אותם.
-3. אם המשתמש שואל שאלות כלליות על בישול, תחליפי מצרכים, או מבקש מתכון חדש שלא באוסף שלו, ספק תשובה עשירה, מפורטת ומדויקת.
-4. השתמש בעיצוב Markdown יפה וקריא (הדגשות, רשימות עם תבליטים ומספור).
+אם המשתמש שואל על מתכונים בספר, השתמש ברשימה זו.
+אם הוא שואל שאלות בישול כלליות או המרות, ענה מתוך הידע הקולינרי שלך.
 `;
 
-  const contents: any[] = [];
-  contents.push({
-    role: 'user',
-    parts: [{ text: `${systemInstruction}\n\nהנה שאלת המשתמש:\n${userMessage}` }],
-  });
+  const contents = [
+    ...history,
+    {
+      role: 'user' as const,
+      parts: [{ text: message }],
+    },
+  ];
 
-  const config: any = {};
+  const config: any = {
+    systemInstruction,
+  };
+
   if (useWebSearch) {
     config.tools = [{ googleSearch: {} }];
   }
 
   try {
     const response = await generateWithFallback(ai, model, {
-      contents: contents,
-      config: config,
+      contents,
+      config,
     });
 
-    return response.text || 'לא התקבלה תשובה מ-Gemini';
+    return response.text || 'לא התקבלה תשובה מ-Gemini.';
   } catch (error: any) {
-    console.error('Gemini chat error:', error);
-    throw new Error(`AI Chat error: ${error.message || error}`);
+    console.error('chatWithRecipeAI error:', error);
+    throw error;
   }
 }

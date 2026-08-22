@@ -166,83 +166,119 @@ export const DropZoneModal: React.FC<DropZoneModalProps> = ({
     setIsProcessingBatch(true);
 
     const pending = items.filter((item) => item.status === 'pending');
-    const CONCURRENCY = 2;
+    const CONCURRENCY = 1;
     let index = 0;
 
     const processItem = async (item: BatchItem) => {
       setBatchItems((prev) =>
-        prev.map((i) => (i.id === item.id ? { ...i, status: 'processing' } : i))
+        prev.map((i) => (i.id === item.id ? { ...i, status: 'processing', errorMessage: undefined } : i))
       );
 
-      try {
-        const formData = new FormData();
-        formData.append('file', item.file);
+      const MAX_ATTEMPTS = 3;
+      let lastErr: any = null;
 
-        const res = await fetch('/api/parse-file', {
-          method: 'POST',
-          body: formData,
-        });
+      for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+        try {
+          const formData = new FormData();
+          formData.append('file', item.file);
 
-        const data = await res.json();
-        if (!res.ok) {
-          throw new Error(data.error || 'שגיאה בפענוח');
-        }
+          const res = await fetch('/api/parse-file', {
+            method: 'POST',
+            body: formData,
+          });
 
-        const recipe: ParsedRecipe = data.recipe;
+          const data = await res.json();
+          if (!res.ok) {
+            const isRateLimit =
+              res.status === 429 ||
+              data.error?.includes('429') ||
+              data.error?.includes('quota') ||
+              data.error?.includes('Resource has been exhausted');
 
-        // Determine category
-        let catIds: string[] = [];
-        if (globalCategoryId) {
-          catIds = [globalCategoryId];
-        } else if (recipe.suggestedCategory) {
-          const matched = categories.find(
-            (c) =>
-              c.name.toLowerCase() === recipe.suggestedCategory?.toLowerCase() ||
-              recipe.suggestedCategory?.toLowerCase().includes(c.name.toLowerCase())
+            if (isRateLimit && attempt < MAX_ATTEMPTS) {
+              setBatchItems((prev) =>
+                prev.map((i) =>
+                  i.id === item.id
+                    ? {
+                        ...i,
+                        errorMessage: `⏳ עומס רגעי ב-AI (ממתין ${attempt * 4} שניות ומנסה שוב)...`,
+                      }
+                    : i
+                )
+              );
+              await new Promise((r) => setTimeout(r, attempt * 4000));
+              continue;
+            }
+
+            throw new Error(data.error || 'שגיאה בפענוח');
+          }
+
+          const recipe: ParsedRecipe = data.recipe;
+
+          // Determine category
+          let catIds: string[] = [];
+          if (globalCategoryId) {
+            catIds = [globalCategoryId];
+          } else if (recipe.suggestedCategory) {
+            const matched = categories.find(
+              (c) =>
+                c.name.toLowerCase() === recipe.suggestedCategory?.toLowerCase() ||
+                recipe.suggestedCategory?.toLowerCase().includes(c.name.toLowerCase())
+            );
+            if (matched) {
+              catIds = [matched.id];
+            }
+          }
+
+          // Check for duplicates
+          const dupCheck = checkDuplicate(recipe, item.file, items, item.id);
+
+          setBatchItems((prev) =>
+            prev.map((i) =>
+              i.id === item.id
+                ? {
+                    ...i,
+                    status: 'done',
+                    parsedRecipe: recipe,
+                    selectedCategoryIds: catIds,
+                    isDuplicate: dupCheck.isDuplicate,
+                    duplicateReason: dupCheck.reason,
+                    existingRecipeId: dupCheck.existingId,
+                    existingRecipeTitle: dupCheck.existingTitle,
+                    errorMessage: undefined,
+                  }
+                : i
+            )
           );
-          if (matched) {
-            catIds = [matched.id];
+          return;
+        } catch (err: any) {
+          lastErr = err;
+          if (attempt < MAX_ATTEMPTS && (err.message?.includes('429') || err.message?.includes('quota'))) {
+            await new Promise((r) => setTimeout(r, attempt * 4000));
+            continue;
           }
         }
-
-        // Check for duplicates
-        const dupCheck = checkDuplicate(recipe, item.file, items, item.id);
-
-        setBatchItems((prev) =>
-          prev.map((i) =>
-            i.id === item.id
-              ? {
-                  ...i,
-                  status: 'done',
-                  parsedRecipe: recipe,
-                  selectedCategoryIds: catIds,
-                  isDuplicate: dupCheck.isDuplicate,
-                  duplicateReason: dupCheck.reason,
-                  existingRecipeId: dupCheck.existingId,
-                  existingRecipeTitle: dupCheck.existingTitle,
-                }
-              : i
-          )
-        );
-      } catch (err: any) {
-        setBatchItems((prev) =>
-          prev.map((i) =>
-            i.id === item.id
-              ? {
-                  ...i,
-                  status: 'error',
-                  errorMessage: err.message || 'שגיאה בפענוח הקובץ',
-                }
-              : i
-          )
-        );
       }
+
+      setBatchItems((prev) =>
+        prev.map((i) =>
+          i.id === item.id
+            ? {
+                ...i,
+                status: 'error',
+                errorMessage: lastErr?.message || 'שגיאה בפענוח הקובץ',
+              }
+            : i
+        )
+      );
     };
 
     const worker = async () => {
       while (index < pending.length) {
         const current = pending[index++];
         await processItem(current);
+        // Small polite pause between files to respect rate limits
+        await new Promise((r) => setTimeout(r, 1200));
       }
     };
 
