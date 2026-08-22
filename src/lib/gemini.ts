@@ -1,6 +1,6 @@
 import { GoogleGenAI } from '@google/genai';
 import { prisma } from './prisma';
-import { ParsedRecipe } from '@/types';
+import { ParsedRecipe, RecipeTransformation } from '@/types';
 
 // Default model - current active Google models
 export const DEFAULT_MODEL = 'gemini-3.7-flash';
@@ -63,20 +63,24 @@ export function robustJsonParse<T = any>(jsonStr: string): T {
     try {
       return JSON.parse(fixed);
     } catch (e2) {
-      const extractArray = (key: string): string[] => {
+      const extractArray = (key: string): any[] => {
         const match = jsonStr.match(new RegExp(`"${key}"\\s*:\\s*\\[([\\s\\S]*?)\\]`));
         if (!match) return [];
-        return match[1]
-          .split('\n')
-          .map((line) =>
-            line
-              .trim()
-              .replace(/^"/, '')
-              .replace(/",?$/, '')
-              .replace(/\\"/g, '"')
-              .trim()
-          )
-          .filter(Boolean);
+        try {
+          return JSON.parse(`[${match[1]}]`);
+        } catch {
+          return match[1]
+            .split('\n')
+            .map((line) =>
+              line
+                .trim()
+                .replace(/^"/, '')
+                .replace(/",?$/, '')
+                .replace(/\\"/g, '"')
+                .trim()
+            )
+            .filter(Boolean);
+        }
       };
 
       const extractString = (key: string): string => {
@@ -99,6 +103,10 @@ export function robustJsonParse<T = any>(jsonStr: string): T {
         instructions: extractArray('instructions'),
         notes: extractString('notes'),
         suggestedCategory: extractString('suggestedCategory'),
+        modifiedTitle: extractString('modifiedTitle'),
+        modifiedIngredients: extractArray('modifiedIngredients'),
+        modifiedInstructions: extractArray('modifiedInstructions'),
+        chefExplanation: extractString('chefExplanation'),
         caloriesPerServing: extractNumber('caloriesPerServing'),
         proteinGrams: extractNumber('proteinGrams'),
         carbsGrams: extractNumber('carbsGrams'),
@@ -139,7 +147,6 @@ async function generateWithFallback(
           errStr.includes('rate-limits');
 
         if (isRateLimit && attempt < 3) {
-          // Exponential backoff: 3s, 6s, 12s + jitter
           const waitTime = Math.min(15000, Math.pow(2, attempt) * 3000 + Math.random() * 1000);
           console.warn(`[Gemini API] Rate limit (429) on ${model}, waiting ${(waitTime / 1000).toFixed(1)}s before retry (attempt ${attempt + 1}/4)...`);
           await sleep(waitTime);
@@ -308,6 +315,153 @@ ${ingredients.map((i, idx) => `${idx + 1}. ${i}`).join('\n')}
   } catch (error: any) {
     console.error('Nutrition estimation error:', error);
     throw new Error(`Failed to estimate nutrition: ${error.message || error}`);
+  }
+}
+
+/**
+ * Intelligent Recipe Goal Modifier & Transformer.
+ * Suggests tailored ingredient substitutions, additions, reductions,
+ * updated instructions, and explanations.
+ */
+export async function transformRecipeWithAI(
+  recipe: {
+    title: string;
+    description?: string | null;
+    servings?: string | null;
+    ingredients: string[];
+    instructions: string[];
+    notes?: string | null;
+    caloriesPerServing?: number | null;
+    proteinGrams?: number | null;
+    carbsGrams?: number | null;
+    fatGrams?: number | null;
+    fiberGrams?: number | null;
+  },
+  goal: string,
+  options: {
+    customInstructions?: string;
+    previousSuggestions?: string[];
+    modelOverride?: string;
+  } = {}
+): Promise<RecipeTransformation> {
+  const ai = getGeminiClient();
+  const model = options.modelOverride || (await getActiveGeminiModel());
+
+  const goalDescriptions: Record<string, string> = {
+    'high-protein': 'העשרת כמות החלבון במתכון משמעותית (לפחות +15g עד +25g חלבון למנה) באמצעות תחליפים עתירי חלבון ותוספות חכמות, תוך שמירה על טעם עשיר ומרקם מושלם.',
+    'low-calorie': 'הפחתת כמות הקלוריות והשומנים במתכון (יצירת גרסה קלילה ובריאה), החלפת רטבים ושומנים כבדים בחלופות קלות, שמירה על נפח משביע וטעם מעולה.',
+    'low-carb': 'התאמה לתזונה דלת פחמימות / קטו (הפחתת סוכרים, קמחים ופחמימות פשוטות למינימום) והחלפתם ברכיבים דלי פחמימות כגון קמחי אגוזים, כרובית או ירקות ירוקים.',
+    'vegetarian': 'הפיכת המתכון לגרסה צמחונית עשירה ומפנקת, החלפת בשר/דגים בחלופות איכותיות כגון טופו, סייטן, פטריות עשירות, קטניות או גבינות.',
+    'custom': options.customInstructions || 'התאמה אישית לפי בקשת המשתמש.',
+  };
+
+  const goalLabels: Record<string, string> = {
+    'high-protein': 'העשרת חלבון 💪',
+    'low-calorie': 'הפחתת קלוריות 🥗',
+    'low-carb': 'דל פחמימות / קטו 🥑',
+    'vegetarian': 'גרסה צמחונית 🌱',
+    'custom': 'התאמה אישית ✨',
+  };
+
+  const prompt = `
+אתה שף עילית מומחה ותזונאי קליני בספר המתכונים המשפחתי "ספר המתכונים של שמוליק פייגנבוים".
+המשתמש מבקש להתאים את המתכון הבא לפי המטרה:
+🎯 מטרה: ${goalDescriptions[goal] || goal}
+${options.customInstructions ? `📝 הנחיות ובקשות מיוחדות מהמשתמש: "${options.customInstructions}"\n` : ''}
+${options.previousSuggestions && options.previousSuggestions.length > 0 ? `⚠️ הערה: המשתמש ביקש אפשרות שונה מההצעות הקודמות הבאות: ${options.previousSuggestions.join(' | ')}. הצע כיוון קולינרי חדש ויצירתי!\n` : ''}
+
+הנה פרטי המתכון המקורי:
+---
+שם המתכון: ${recipe.title}
+כמות מנות: ${recipe.servings || '4 מנות'}
+ערכים נוכחיים למנה: ${recipe.caloriesPerServing ? `${recipe.caloriesPerServing} קק״ל, ${recipe.proteinGrams}g חלבון, ${recipe.carbsGrams}g פחמימות` : 'טרם חושבו'}
+
+מצרכים מקוריים:
+${recipe.ingredients.map((i, idx) => `${idx + 1}. ${i}`).join('\n')}
+
+שלבי הכנה מקוריים:
+${recipe.instructions.map((step, idx) => `שלב ${idx + 1}: ${step}`).join('\n')}
+---
+
+עליך להחזיר אך ורק אובייקט JSON תקין (ללא markdown) במבנה הבא:
+{
+  "modifiedTitle": "שם המתכון המותאם (למשל: ${recipe.title} - גרסה מועשרת בחלבון)",
+  "modifiedIngredients": [
+    {
+      "text": "טקסט המצרך המעודכן עם כמות מדויקת בעברית",
+      "changeType": "substituted",
+      "originalText": "טקסט המצרך המקורי שהוחלף (אם הוחלף/שונה, אחרת ריק)",
+      "explanation": "הסבר קצר מדוע שונה (למשל: מעלה 15 גרם חלבון ומפחית 100 קלוריות)"
+    }
+  ],
+  "modifiedInstructions": [
+    "שלבי ההכנה המעודכנים בעברית בסדר כרונולוגי (כולל התייחסות למצרכים החדשים)"
+  ],
+  "chefExplanation": "הסבר שף חם, מקצועי ומפורט בעברית (2-4 משפטים) שמסביר כיצד ההתאמה עובדת, מדוע היא שומרת על הטעם המקורי ומה היתרונות הבריאותיים שלה.",
+  "caloriesPerServing": 380,
+  "proteinGrams": 38,
+  "carbsGrams": 20,
+  "fatGrams": 12,
+  "fiberGrams": 5
+}
+
+הערכים האפשריים ל-"changeType" הם:
+- "added": מצרך חדש שנוסף למתכון שלא היה קיים במקור.
+- "substituted": מצרך שהחליף מצרך מקורי קיים.
+- "reduced": מצרך מקורי שכמותו הופחתה (למשל פחות סוכר/שמן).
+- "unchanged": מצרך שנשאר בדיוק כמו במקור.
+
+חשוב מאוד: השתמש בגרש בודד (') עבור קיצורים עבריים (כמו תפו'א, ק'ג, ס'מ) כדי לשמור על תקינות ה-JSON!
+`;
+
+  try {
+    const response = await generateWithFallback(ai, model, {
+      contents: prompt,
+      config: {
+        responseMimeType: 'application/json',
+      },
+    });
+
+    const text = response.text || '';
+    const cleaned = text.replace(/```json/g, '').replace(/```/g, '').trim();
+    const parsed = robustJsonParse<any>(cleaned);
+
+    const safeIngredients = Array.isArray(parsed.modifiedIngredients)
+      ? parsed.modifiedIngredients.map((item: any) => {
+          if (typeof item === 'string') {
+            return { text: item, changeType: 'unchanged' };
+          }
+          return {
+            text: String(item.text || ''),
+            changeType: (['added', 'substituted', 'reduced', 'unchanged'].includes(item.changeType)
+              ? item.changeType
+              : 'unchanged') as any,
+            originalText: item.originalText ? String(item.originalText) : undefined,
+            explanation: item.explanation ? String(item.explanation) : undefined,
+          };
+        })
+      : recipe.ingredients.map((ing) => ({ text: ing, changeType: 'unchanged' as const }));
+
+    return {
+      goal,
+      goalLabel: goalLabels[goal] || 'התאמת מתכון ✨',
+      modifiedTitle: parsed.modifiedTitle || `${recipe.title} (גרסה מותאמת)`,
+      modifiedIngredients: safeIngredients,
+      modifiedInstructions: Array.isArray(parsed.modifiedInstructions)
+        ? parsed.modifiedInstructions
+        : recipe.instructions,
+      chefExplanation:
+        parsed.chefExplanation ||
+        'המתכון הותאם בהצלחה על פי בקשתך תוך שמירה על טעמים עשירים ואיזון קולינרי מושלם.',
+      caloriesPerServing: typeof parsed.caloriesPerServing === 'number' ? Math.round(parsed.caloriesPerServing) : null,
+      proteinGrams: typeof parsed.proteinGrams === 'number' ? Math.round(parsed.proteinGrams * 10) / 10 : null,
+      carbsGrams: typeof parsed.carbsGrams === 'number' ? Math.round(parsed.carbsGrams * 10) / 10 : null,
+      fatGrams: typeof parsed.fatGrams === 'number' ? Math.round(parsed.fatGrams * 10) / 10 : null,
+      fiberGrams: typeof parsed.fiberGrams === 'number' ? Math.round(parsed.fiberGrams * 10) / 10 : null,
+    };
+  } catch (error: any) {
+    console.error('Recipe transformation error:', error);
+    throw new Error(`שגיאה בהתאמת המתכון ב-AI: ${error.message || error}`);
   }
 }
 

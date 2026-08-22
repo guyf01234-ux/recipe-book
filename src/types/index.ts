@@ -68,3 +68,26 @@ export interface AppSettings {
   geminiModel: string;
   nutritionSettings?: NutritionSettings;
 }
+
+export type IngredientChangeType = 'added' | 'substituted' | 'reduced' | 'unchanged';
+
+export interface ModifiedIngredient {
+  text: string;
+  changeType: IngredientChangeType;
+  originalText?: string;
+  explanation?: string;
+}
+
+export interface RecipeTransformation {
+  goal: string;
+  goalLabel: string;
+  modifiedTitle: string;
+  modifiedIngredients: ModifiedIngredient[];
+  modifiedInstructions: string[];
+  chefExplanation: string;
+  caloriesPerServing?: number | null;
+  proteinGrams?: number | null;
+  carbsGrams?: number | null;
+  fatGrams?: number | null;
+  fiberGrams?: number | null;
+}
