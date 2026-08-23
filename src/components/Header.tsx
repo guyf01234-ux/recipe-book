@@ -9,6 +9,7 @@ import {
   Settings as SettingsIcon,
   ChefHat,
   Salad,
+  Tags,
 } from 'lucide-react';
 
 interface HeaderProps {
@@ -19,6 +20,7 @@ interface HeaderProps {
   onOpenAIChat: () => void;
   onOpenSettings: () => void;
   onOpenBatchNutrition?: () => void;
+  onOpenBulkCategoryAssign?: () => void;
   onReopenBook?: () => void;
 }
 
@@ -30,6 +32,7 @@ export const Header: React.FC<HeaderProps> = ({
   onOpenAIChat,
   onOpenSettings,
   onOpenBatchNutrition,
+  onOpenBulkCategoryAssign,
   onReopenBook,
 }) => {
   return (
@@ -70,6 +73,19 @@ export const Header: React.FC<HeaderProps> = ({
             >
               <BookOpen className="w-3.5 h-3.5 text-amber-600" />
               <span className="hidden sm:inline">פתיחת ספר</span>
+            </button>
+          )}
+
+          {/* Bulk Category Assign Button */}
+          {onOpenBulkCategoryAssign && (
+            <button
+              onClick={onOpenBulkCategoryAssign}
+              title="שיוך מתכונים לקטגוריה במרוכז"
+              className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-orange-50 text-orange-900 border border-orange-200/90 font-bold text-xs hover:bg-orange-100 transition active:scale-95 shadow-2xs"
+            >
+              <Tags className="w-4 h-4 text-orange-600" />
+              <span className="hidden md:inline">שייך לקטגוריה 🏷️</span>
+              <span className="md:hidden">שייך 🏷️</span>
             </button>
           )}
 

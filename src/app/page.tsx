@@ -10,6 +10,7 @@ import { DropZoneModal } from '@/components/DropZoneModal';
 import { CategoryManagerModal } from '@/components/CategoryManagerModal';
 import { SettingsModal } from '@/components/SettingsModal';
 import { BatchNutritionModal } from '@/components/BatchNutritionModal';
+import { BulkCategoryAssignModal } from '@/components/BulkCategoryAssignModal';
 import { AIChatDrawer } from '@/components/AIChatDrawer';
 import { BookOpeningIntro } from '@/components/BookOpeningIntro';
 import {
@@ -21,6 +22,7 @@ import {
   Search,
   RefreshCw,
   Salad,
+  Tags,
 } from 'lucide-react';
 import { Recipe, Category, NutritionSettings, DEFAULT_NUTRITION_SETTINGS } from '@/types';
 import { filterRecipesByNutrition } from '@/lib/nutrition';
@@ -55,6 +57,7 @@ export default function Home() {
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isCategoryManagerOpen, setIsCategoryManagerOpen] = useState(false);
   const [isBatchNutritionOpen, setIsBatchNutritionOpen] = useState(false);
+  const [isBulkCategoryAssignOpen, setIsBulkCategoryAssignOpen] = useState(false);
   const [viewingRecipe, setViewingRecipe] = useState<Recipe | null>(null);
   const [editingRecipe, setEditingRecipe] = useState<Recipe | null>(null);
   const [aiInitialPrompt, setAiInitialPrompt] = useState<string>('');
@@ -291,6 +294,7 @@ export default function Home() {
         }}
         onOpenSettings={() => setIsSettingsOpen(true)}
         onOpenBatchNutrition={() => setIsBatchNutritionOpen(true)}
+        onOpenBulkCategoryAssign={() => setIsBulkCategoryAssignOpen(true)}
         onReopenBook={() => setShowBookIntro(true)}
       />
 
@@ -550,6 +554,14 @@ export default function Home() {
         onClose={() => setIsCategoryManagerOpen(false)}
         categories={categories}
         onRefresh={handleRefreshAll}
+      />
+
+      {/* Bulk Category Assign Modal */}
+      <BulkCategoryAssignModal
+        isOpen={isBulkCategoryAssignOpen}
+        onClose={() => setIsBulkCategoryAssignOpen(false)}
+        categories={categories}
+        onComplete={handleRefreshAll}
       />
 
       {/* Batch Nutrition Modal */}
